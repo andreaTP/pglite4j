@@ -1,0 +1,139 @@
+#!/bin/bash
+# WASI C/C++ compiler wrapper
+# Replaces the pygame-web Python wasi-c wrapper with a simple bash script.
+# Handles three modes based on how the script is invoked:
+#   wasi-c   -> clang
+#   wasi-c++ -> clang++
+#   wasi-cpp -> clang -E (preprocessor only)
+
+SDKROOT="${SDKROOT:-/tmp/sdk}"
+WASISDK="${WASISDK:-${SDKROOT}/wasisdk}"
+WASI_SDK_PREFIX="${WASI_SDK_PREFIX:-${WASISDK}/upstream}"
+PREFIX="${PREFIX:-${SDKROOT}/devices/wasisdk/usr}"
+
+SCRIPT_NAME="$(basename "$0")"
+
+# Preprocessor mode (wasi-cpp)
+if [[ "$SCRIPT_NAME" == "wasi-cpp" ]]; then
+    exec "${WASI_SDK_PREFIX}/bin/clang" -E \
+        -D_GNU_SOURCE \
+        -D_WASI_EMULATED_MMAN \
+        -D_WASI_EMULATED_SIGNAL \
+        -D_WASI_EMULATED_PROCESS_CLOCKS \
+        -D_WASI_EMULATED_GETPID \
+        "$@"
+fi
+
+# Determine compiler binary and C++ mode
+IS_CXX=false
+if [[ "$SCRIPT_NAME" == *"c++" || "$SCRIPT_NAME" == *"cxx" ]]; then
+    COMPILER="${WASI_SDK_PREFIX}/bin/clang++"
+    IS_CXX=true
+else
+    COMPILER="${WASI_SDK_PREFIX}/bin/clang"
+fi
+
+# Check if we're in configure mode (configure tests should not see patch.h stubs)
+CONFIGURE_MODE=false
+if [[ -n "${CONFIG_SITE}" ]] || [[ "${CONFIGURE}" == "true" ]]; then
+    CONFIGURE_MODE=true
+fi
+
+# Detect if this is a compile-only invocation (no linking)
+# Also detect if we're building a shared library
+COMPILE_ONLY=false
+SHARED_MODE=false
+for arg in "$@"; do
+    case "$arg" in
+        -c|-E|-S) COMPILE_ONLY=true ;;
+        -shared) SHARED_MODE=true ;;
+    esac
+done
+
+# Build argument list, filtering out problematic flags
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        -pthread|-latomic)
+            # Skip: not supported in WASI
+            continue
+            ;;
+        -Wl,--start-group|-Wl,--end-group)
+            # Skip: not needed for WASM linking
+            continue
+            ;;
+        -I/usr/*)
+            # Skip: host system includes would break cross-compilation
+            continue
+            ;;
+        -L/usr/*)
+            # Skip: host system libraries
+            continue
+            ;;
+    esac
+    ARGS+=("$arg")
+done
+
+# Always add WASI emulation defines
+ARGS+=(
+    -D_GNU_SOURCE
+    -D_WASI_EMULATED_MMAN
+    -D_WASI_EMULATED_SIGNAL
+    -D_WASI_EMULATED_PROCESS_CLOCKS
+    -D_WASI_EMULATED_GETPID
+)
+
+# Add cross-compiled library paths (zlib etc.)
+ARGS+=(-I"${PREFIX}/include")
+
+# Add patch.h and hotfix includes (disabled during configure)
+if [[ "$CONFIGURE_MODE" == "false" ]]; then
+    ARGS+=(
+        -include "${WASISDK}/hotfix/patch.h"
+        -isystem "${WASISDK}/hotfix"
+    )
+    # Suppress warnings from stubs and PostgreSQL code
+    ARGS+=(
+        -Wno-unknown-pragmas
+        -Wno-invalid-noreturn
+        -Wno-unused-but-set-variable
+        -Wno-unused-command-line-argument
+        -Wno-unsupported-floating-point-opt
+        -Wno-nullability-completeness
+        -Wno-missing-prototypes
+        -Wno-unused-function
+    )
+fi
+
+# Suppress "argument unused" warnings that break configure flag detection
+ARGS+=(-Qunused-arguments)
+
+# Add link-related flags only when linking (not compile-only)
+if [[ "$COMPILE_ONLY" == "false" ]]; then
+    ARGS+=(
+        -lwasi-emulated-getpid
+        -lwasi-emulated-mman
+        -lwasi-emulated-signal
+        -lwasi-emulated-process-clocks
+        -L"${PREFIX}/lib"
+        -z stack-size=131072
+    )
+    # Shared library modules (encoding conversions, etc.) have unresolved
+    # symbols that are provided by the main binary at link time.
+    if [[ "$SHARED_MODE" == "true" ]]; then
+        ARGS+=(-Wl,--allow-undefined)
+    fi
+fi
+
+# Misc compilation flags
+ARGS+=(-fPIC)
+
+# C++ only flags
+if [[ "$IS_CXX" == "true" ]]; then
+    ARGS+=(
+        -fno-rtti
+        -fno-exceptions
+    )
+fi
+
+exec "$COMPILER" "${ARGS[@]}"

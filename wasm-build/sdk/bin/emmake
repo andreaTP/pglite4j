@@ -1,0 +1,3 @@
+#!/bin/bash
+# Make wrapper -- simple passthrough.
+"$@"

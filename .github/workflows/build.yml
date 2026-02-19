@@ -1,0 +1,53 @@
+name: Build pglite WASI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        working-directory: wasm-build
+        run: |
+          cp -r sdk docker/sdk
+          docker build -t pglite-wasi-builder docker/
+          rm -rf docker/sdk
+
+      - name: Run WASI build
+        working-directory: wasm-build
+        run: |
+          mkdir -p output/sdk-build output/sdk-dist output/pglite
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace:rw" \
+            -v "${{ github.workspace }}/output/sdk-build:/tmp/sdk/build:rw" \
+            -v "${{ github.workspace }}/output/sdk-dist:/tmp/sdk/dist:rw" \
+            -v "${{ github.workspace }}/output/pglite:/tmp/pglite:rw" \
+            -e DEBUG=true \
+            -e CI=true \
+            pglite-wasi-builder
+
+      - name: Verify build outputs
+        working-directory: wasm-build
+        run: |
+          ls -lh output/sdk-dist/pglite.wasi
+          ls -lh output/sdk-dist/pg_dump.wasi
+          ls -lh output/sdk-dist/pglite-wasi.tar.xz
+          file output/sdk-dist/pglite.wasi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pglite-wasi
+          path: |
+            wasm-build/output/sdk-dist/pglite.wasi
+            wasm-build/output/sdk-dist/pg_dump.wasi
+            wasm-build/output/sdk-dist/pglite-wasi.tar.xz

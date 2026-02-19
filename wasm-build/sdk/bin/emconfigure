@@ -1,0 +1,5 @@
+#!/bin/bash
+# Configure wrapper for WASI cross-compilation.
+# Sets CONFIGURE=true so that the wasi-c wrapper skips patch.h
+# (configure tests need clean standard library behavior).
+CONFIGURE=true "$@" --host $(arch) --target=wasm32-wasi-preview1 --with-template=wasi
