@@ -9,12 +9,10 @@ echo "Cleaning build artifacts..."
 
 sudo rm -rf \
     output \
-    postgresql-* \
+    postgresql-src \
     pglite-wasm \
     pglite-link.sh \
     wasi.done \
-    patches-REL_* \
-    pglite-REL_* \
     docker/sdk
 
 echo "Clean complete."

@@ -9,7 +9,7 @@
 SDKROOT="${SDKROOT:-/tmp/sdk}"
 WASISDK="${WASISDK:-${SDKROOT}/wasisdk}"
 WASI_SDK_PREFIX="${WASI_SDK_PREFIX:-${WASISDK}/upstream}"
-PREFIX="${PREFIX:-${SDKROOT}/devices/wasisdk/usr}"
+PREFIX="${PREFIX:-${SDKROOT}/zlib}"
 
 SCRIPT_NAME="$(basename "$0")"
 

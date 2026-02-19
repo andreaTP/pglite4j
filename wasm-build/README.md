@@ -1,5 +1,7 @@
 # pglite WASI Build
 
+Derived from: https://github.com/electric-sql/pglite-build
+
 Self-contained Docker build for compiling PostgreSQL to WebAssembly (WASI target) as pglite.
 
 All toolchain components are downloaded from upstream sources at build time -- no vendored binaries or third-party SDKs required.
@@ -65,7 +67,7 @@ Delete the cloned source tree so the next build re-clones and re-applies
 patches:
 
 ```bash
-rm -rf postgresql-REL_17_5_WASM-pglite
+rm -rf postgresql-src
 ```
 
 ### 3. Rebuild
@@ -89,7 +91,7 @@ CLEAN=true ./build.sh
 .
 ├── build.sh                  # Build script (run this)
 ├── docker/
-│   ├── Dockerfile            # Build environment (downloads wasi-sdk, wasmtime, wabt)
+│   ├── Dockerfile            # Build environment (downloads wasi-sdk, cross-compiles zlib)
 │   └── entrypoint.sh         # Clones PostgreSQL, applies patches, runs build
 ├── sdk/
 │   ├── hotfix/               # POSIX stub headers (pwd.h, netdb.h, dlfcn.h, etc.)
@@ -100,10 +102,11 @@ CLEAN=true ./build.sh
 │   │   ├── bits/alltypes.h   # Adds pthread_barrier_t for PostgreSQL
 │   │   ├── __struct_sockaddr_un.h  # Adds sun_path to sockaddr_un
 │   │   └── ...
-│   └── bin/                  # Compiler wrapper scripts
-│       ├── wasi-c            # Bash wrapper for clang (adds WASI flags)
-│       ├── emconfigure       # Configure wrapper (--host/--target for cross-compilation)
-│       ├── emmake            # Make passthrough
+│   └── bin/                  # Cross-compilation toolchain (see "Compiler Wrappers" below)
+│       ├── wasi-c            # CC wrapper: clang + WASI flags + argument filtering
+│       ├── wasi-c++          # Symlink to wasi-c (C++ mode)
+│       ├── wasi-cpp          # Symlink to wasi-c (preprocessor mode)
+│       ├── wasi-configure    # Configure wrapper (--host/--target for cross-compilation)
 │       └── wasisdk_env.sh    # Environment setup (CC, AR, PATH, etc.)
 ├── patches/
 │   ├── postgresql-emscripten/  # Shared WASM patches
@@ -113,7 +116,6 @@ CLEAN=true ./build.sh
 ├── wasm-build/
 │   ├── build-pgcore.sh        # PostgreSQL core compilation
 │   ├── build-ext.sh           # Extension compilation
-│   ├── sdk.sh                 # SDK validation
 │   ├── sdk_port.h             # POSIX compatibility layer
 │   ├── sdk_port-wasi/         # WASI runtime stubs
 │   └── ...
@@ -124,26 +126,51 @@ CLEAN=true ./build.sh
 
 ## How the Build Works
 
-1. **Docker image** is built from `docker/Dockerfile`:
+1. **Docker image** (`docker/Dockerfile`):
    - Debian bookworm-slim with build tools (make, gcc, bison, flex, etc.)
-   - Downloads [wasi-sdk 25](https://github.com/WebAssembly/wasi-sdk) (clang/lld for WASM)
-   - Patches the wasi-sdk sysroot with `sdk/sysfix/` headers
-   - Installs `sdk/hotfix/` stub headers and bash compiler wrappers
+   - Downloads [wasi-sdk 25](https://github.com/WebAssembly/wasi-sdk) (clang/lld targeting WASM)
+   - Patches the wasi-sdk sysroot with `sdk/sysfix/` headers for missing POSIX types
+   - Installs `sdk/hotfix/` stub headers and the `sdk/bin/` compiler wrappers
    - Cross-compiles [zlib](https://github.com/madler/zlib) for WASI
-   - Downloads [wasmtime v33](https://github.com/bytecodealliance/wasmtime) for running WASI binaries during build
-   - Downloads [wasm-objdump](https://github.com/WebAssembly/wabt) for symbol inspection
 
 2. **Entrypoint** (`docker/entrypoint.sh`):
-   - Clones the pre-patched postgres-pglite fork (includes `pglite-wasm/` entry point)
-   - Applies any additional patches from `patches/`
-   - Copies SDK port files (POSIX stubs for signals, semaphores, etc.)
+   - Clones the postgres-pglite fork into `postgresql-src/`
+   - Applies patches from `patches/`
+   - Copies POSIX runtime stubs (`sdk_port-wasi/`) into the install prefix
    - Runs `wasm-build.sh`
 
-3. **Build** (`wasm-build.sh`):
-   - Configures PostgreSQL for WASI cross-compilation
-   - Compiles the PostgreSQL backend, utilities, and extensions
-   - Links everything into `pglite.wasi`
+3. **Build** (`wasm-build.sh` + `wasm-build/build-pgcore.sh`):
+   - Sources `wasisdk_env.sh` to set `CC=wasi-c`, `AR`, `PATH`, etc.
+   - Runs PostgreSQL's `configure` via `wasi-configure` (adds `--target=wasm32-wasi-preview1`)
+   - Runs `make install` -- PostgreSQL's Makefile invokes `$CC` (`wasi-c`) for each source file
+   - Links `pglite.wasi` and `pg_dump.wasi` via `pglite-wasm/build.sh`
    - Packages the result into `pglite-wasi.tar.xz`
+
+## Compiler Wrappers
+
+PostgreSQL's build system (`configure` + `make`) invokes the C compiler
+hundreds of times with flags that assume a POSIX host. The `sdk/bin/`
+wrappers adapt this for WASI cross-compilation. This is the same pattern
+used by emcc, android-ndk, and musl-gcc.
+
+**`wasi-c`** (`$CC`) -- the main wrapper. On each invocation it:
+- Filters out flags that break WASI (`-pthread`, `-latomic`, `-I/usr/*`, `-L/usr/*`)
+- Adds WASI emulation defines (`-D_WASI_EMULATED_MMAN`, etc.)
+- Force-includes `patch.h` (POSIX stubs) during builds, but **skips it
+  during `configure`** so that feature-detection probes see clean libc behavior
+- Adds link-time flags (`-lwasi-emulated-*`, `-L$PREFIX/lib`) only when
+  actually linking (not for `-c` compile-only invocations)
+- Handles `-shared` mode for PostgreSQL's encoding conversion modules
+
+`wasi-c++` and `wasi-cpp` are symlinks to `wasi-c` -- it detects the
+invoked name and switches to `clang++` or `clang -E` accordingly.
+
+**`wasi-configure`** -- one-liner that sets `CONFIGURE=true` (tells
+`wasi-c` to skip `patch.h`) and adds `--host`/`--target` flags.
+
+**`wasisdk_env.sh`** -- sets `CC`, `CXX`, `CPP`, `AR`, `RANLIB`, `PATH`,
+`PKG_CONFIG_*`, etc. Sourced by `entrypoint.sh` and the generated
+`pg-make.sh` rebuild script.
 
 ## Upstream Dependencies
 
@@ -152,8 +179,6 @@ All tools are downloaded from their official upstream sources:
 | Tool | Version | Source |
 |------|---------|--------|
 | wasi-sdk | 25.0 | [WebAssembly/wasi-sdk](https://github.com/WebAssembly/wasi-sdk) |
-| wasmtime | 33.0.0 | [bytecodealliance/wasmtime](https://github.com/bytecodealliance/wasmtime) |
-| wabt | 1.0.36 | [WebAssembly/wabt](https://github.com/WebAssembly/wabt) |
 | zlib | 1.3.1 | [madler/zlib](https://github.com/madler/zlib) |
 
 ## CI

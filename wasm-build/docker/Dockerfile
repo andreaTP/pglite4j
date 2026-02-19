@@ -1,8 +1,6 @@
 FROM debian:bookworm-slim
 
 ARG WASI_SDK_VERSION=25.0
-ARG WASMTIME_VERSION=33.0.0
-ARG WABT_VERSION=1.0.36
 ARG ZLIB_VERSION=1.3.1
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -16,7 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-dev \
     curl wget ca-certificates \
     tar xz-utils file liblz4-tool \
-    nodejs \
     autoconf automake libtool pkg-config \
     findutils binutils coreutils \
     tzdata \
@@ -26,12 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p \
     ${SDKROOT}/wasisdk/bin \
     ${SDKROOT}/wasisdk/hotfix \
-    ${SDKROOT}/devices/x86_64/usr/bin \
-    ${SDKROOT}/devices/wasisdk/usr/lib \
-    ${SDKROOT}/devices/wasisdk/usr/include \
+    ${SDKROOT}/zlib/lib \
+    ${SDKROOT}/zlib/include \
     ${SDKROOT}/build/wasi \
     ${SDKROOT}/dist \
-    ${SDKROOT}/emsdk/node/20.18.0_64bit/bin \
     ${PGROOT}/bin \
     ${PGROOT}/include
 
@@ -41,21 +36,6 @@ RUN cd /tmp && \
     tar xf wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux.tar.gz && \
     mv wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux ${SDKROOT}/wasisdk/upstream && \
     rm wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux.tar.gz
-
-# ── Install wasmtime from upstream bytecodealliance ──────────────────────────
-RUN cd /tmp && \
-    wget -q "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" && \
-    tar xf wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz && \
-    cp wasmtime-v${WASMTIME_VERSION}-x86_64-linux/wasmtime ${SDKROOT}/devices/x86_64/usr/bin/ && \
-    ln -s ${SDKROOT}/devices/x86_64/usr/bin/wasmtime /usr/local/bin/wasmtime && \
-    rm -rf wasmtime-v${WASMTIME_VERSION}-x86_64-linux wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz
-
-# ── Install wasm-objdump from WABT ──────────────────────────────────────────
-RUN cd /tmp && \
-    wget -q "https://github.com/WebAssembly/wabt/releases/download/${WABT_VERSION}/wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz" && \
-    tar xf wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz && \
-    cp wabt-${WABT_VERSION}/bin/wasm-objdump /usr/local/bin/wasm-objdump && \
-    rm -rf wabt-${WABT_VERSION} wabt-${WABT_VERSION}-ubuntu-20.04.tar.gz
 
 # ── Copy our SDK files (hotfix headers, sysfix overlays, wrapper scripts) ────
 COPY sdk/ /tmp/sdk-files/
@@ -85,24 +65,12 @@ RUN cp -r /tmp/sdk-files/bin/* ${SDKROOT}/wasisdk/bin/ && \
     chmod +x ${SDKROOT}/wasisdk/bin/* ${SDKROOT}/wasisdk/wasisdk_env.sh && \
     rm -rf /tmp/sdk-files
 
-# ── Set up PATH so wasi-c, clang, wasmtime etc. are available ───────────────
-ENV PATH="${SDKROOT}/wasisdk/bin:${SDKROOT}/wasisdk/upstream/bin:${SDKROOT}/devices/x86_64/usr/bin:${PGROOT}/bin:/usr/local/bin:${PATH}"
+# ── Set up PATH so wasi-c, clang etc. are available ──────────────────────────
+ENV PATH="${SDKROOT}/wasisdk/bin:${SDKROOT}/wasisdk/upstream/bin:${PGROOT}/bin:/usr/local/bin:${PATH}"
 
 # ── Create minimal SDK config file ──────────────────────────────────────────
 RUN printf '#!/bin/bash\nexport SYS_PYTHON=${SYS_PYTHON:-$(which python3)}\n' \
     > ${SDKROOT}/config
-
-# ── Create wasm32-wasi-shell.sh (environment bootstrap for env -i contexts) ─
-# This script is sourced by pg-make.sh which runs under env -i (empty env),
-# so it must establish the full PATH including system tools.
-RUN echo '#!/bin/bash' > ${SDKROOT}/wasm32-wasi-shell.sh && \
-    echo 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' >> ${SDKROOT}/wasm32-wasi-shell.sh && \
-    echo 'export SDKROOT="${SDKROOT:-/tmp/sdk}"' >> ${SDKROOT}/wasm32-wasi-shell.sh && \
-    echo 'export PGROOT="${PGROOT:-/tmp/pglite}"' >> ${SDKROOT}/wasm32-wasi-shell.sh && \
-    echo '. ${SDKROOT}/config' >> ${SDKROOT}/wasm32-wasi-shell.sh && \
-    echo '. ${SDKROOT}/wasisdk/wasisdk_env.sh' >> ${SDKROOT}/wasm32-wasi-shell.sh && \
-    echo 'export PATH="${PGROOT}/bin:${PATH}"' >> ${SDKROOT}/wasm32-wasi-shell.sh && \
-    chmod +x ${SDKROOT}/wasm32-wasi-shell.sh
 
 # ── Cross-compile zlib for WASI ─────────────────────────────────────────────
 # The build needs libz.a for PostgreSQL compression support.
@@ -118,19 +86,13 @@ RUN cd /tmp && \
     RANLIB="${SDKROOT}/wasisdk/upstream/bin/ranlib" \
     CFLAGS="--target=wasm32-wasip1 --sysroot=${SDKROOT}/wasisdk/upstream/share/wasi-sysroot -O2 -fPIC" \
     LDFLAGS="--target=wasm32-wasip1 --sysroot=${SDKROOT}/wasisdk/upstream/share/wasi-sysroot" \
-    ./configure --static --prefix=${SDKROOT}/devices/wasisdk/usr && \
+    ./configure --static --prefix=${SDKROOT}/zlib && \
     make -j$(nproc) && \
     make install && \
     cd /tmp && rm -rf zlib-${ZLIB_VERSION} zlib-${ZLIB_VERSION}.tar.gz
 
 # ── Create stub libxml2.a (XML is disabled but -lxml2 appears in link flags) ─
-RUN ${SDKROOT}/wasisdk/upstream/bin/llvm-ar rcs ${SDKROOT}/devices/wasisdk/usr/lib/libxml2.a
-
-# ── Symlink node into expected emsdk path ────────────────────────────────────
-RUN ln -sf $(which node) ${SDKROOT}/emsdk/node/20.18.0_64bit/bin/node
-
-# ── Symlink python3 into host tools path ─────────────────────────────────────
-RUN ln -sf $(which python3) ${SDKROOT}/devices/x86_64/usr/bin/python3
+RUN ${SDKROOT}/wasisdk/upstream/bin/llvm-ar rcs ${SDKROOT}/zlib/lib/libxml2.a
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

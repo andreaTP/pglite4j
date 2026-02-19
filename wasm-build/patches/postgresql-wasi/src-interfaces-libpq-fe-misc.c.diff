@@ -1,0 +1,43 @@
+--- REL_17_5_WASM/src/interfaces/libpq/fe-misc.c
++++ REL_17_5_WASM-pglite/src/interfaces/libpq/fe-misc.c
+@@ -826,7 +826,11 @@
+ 		int			sent;
+ 
+ #ifndef WIN32
++#if defined(__wasi__)
++        sent = send(conn->sock, ptr, len, 0);
++#else
+ 		sent = pqsecure_write(conn, ptr, len);
++#endif /* __wasi__ */
+ #else
+ 
+ 		/*
+@@ -959,7 +963,9 @@
+ 
+ 		return pqSendSome(conn, conn->outCount);
+ 	}
+-
++#if defined(__wasi__)
++    sdk_sock_flush();
++#endif /* __wasi__ */
+ 	return 0;
+ }
+ 
+@@ -1040,6 +1046,9 @@
+ static int
+ pqSocketCheck(PGconn *conn, int forRead, int forWrite, pg_usec_time_t end_time)
+ {
++#if defined(__wasi__)
++    return 1;
++#else
+ 	int			result;
+ 
+ 	if (!conn)
+@@ -1073,6 +1082,7 @@
+ 	}
+ 
+ 	return result;
++#endif
+ }
+ 
+ 

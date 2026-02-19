@@ -17,7 +17,7 @@ if [ -z "${WASISDK_ENV+z}" ]; then
 
     export CMAKE_TOOLCHAIN_FILE=${WASISDK}/share/cmake/Modules/Platform/WASI.cmake
 
-    export CMAKE_INSTALL_PREFIX="${SDKROOT}/devices/${ARCH}/usr"
+    export CMAKE_INSTALL_PREFIX="${SDKROOT}/zlib"
     export PREFIX=$CMAKE_INSTALL_PREFIX
 
     if [ -d ${WASI_SDK_PREFIX}/bin ]; then

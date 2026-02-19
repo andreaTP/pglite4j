@@ -53,29 +53,22 @@ END
 
 cd ${WORKSPACE}
 
-# ── Create expected directory names as symlinks ──────────────────────────────
-# The build scripts reference patches-${PG_BRANCH}.
-# Our repo uses a simpler name (patches/), so we symlink.
-if [ ! -L "patches-${PG_BRANCH}" ] && [ ! -d "patches-${PG_BRANCH}" ]; then
-    ln -sf patches "patches-${PG_BRANCH}"
-fi
-
 # ── Clone postgres-pglite if not present ─────────────────────────────────────
-if [ ! -f "postgresql-${PG_BRANCH}/configure" ]; then
+if [ ! -f "postgresql-src/configure" ]; then
     echo "Cloning postgres-pglite branch ${PG_BRANCH}..."
-    rm -rf "postgresql-${PG_BRANCH}"
+    rm -rf "postgresql-src"
     git clone --no-tags --depth 1 --single-branch --branch "${PG_BRANCH}" \
-        https://github.com/electric-sql/postgres-pglite "postgresql-${PG_BRANCH}"
+        https://github.com/electric-sql/postgres-pglite "postgresql-src"
 fi
 
 # ── Check if already patched (by pre-patched fork) ──────────────────────────
-if grep -q "PORTNAME.*emscripten" "postgresql-${PG_BRANCH}/contrib/pgcrypto/Makefile" 2>/dev/null; then
-    touch "postgresql-${PG_BRANCH}/postgresql-${PG_BRANCH}.patched"
+if grep -q "PORTNAME.*emscripten" "postgresql-src/contrib/pgcrypto/Makefile" 2>/dev/null; then
+    touch "postgresql-src/postgresql-src.patched"
 fi
 
 # ── Apply patches if not already done ────────────────────────────────────────
-cd "postgresql-${PG_BRANCH}"
-if [ -f "postgresql-${PG_BRANCH}.patched" ]; then
+cd "postgresql-src"
+if [ -f "postgresql-src.patched" ]; then
     echo "Source tree already patched."
 else
     echo "Applying patches..."
@@ -92,8 +85,8 @@ else
         postgresql-wasi \
         postgresql-pglite
     do
-        if [ -d "${WORKSPACE}/patches-${PG_BRANCH}/${patchdir}" ]; then
-            for one in "${WORKSPACE}/patches-${PG_BRANCH}/${patchdir}"/*.diff; do
+        if [ -d "${WORKSPACE}/patches/${patchdir}" ]; then
+            for one in "${WORKSPACE}/patches/${patchdir}"/*.diff; do
                 if patch -p1 < "$one"; then
                     echo "  Applied: $(basename $one)"
                 else
@@ -103,7 +96,7 @@ else
             done
         fi
     done
-    touch "postgresql-${PG_BRANCH}.patched"
+    touch "postgresql-src.patched"
 fi
 cd ${WORKSPACE}
 
@@ -111,22 +104,12 @@ cd ${WORKSPACE}
 # The pglite-wasm/ files are part of the postgres-pglite fork (no need to vendor).
 if [ ! -f pglite-wasm/build.sh ]; then
     mkdir -p pglite-wasm
-    cp -Rv "postgresql-${PG_BRANCH}/pglite-wasm"/* pglite-wasm/
+    cp -Rv "postgresql-src/pglite-wasm"/* pglite-wasm/
 fi
 
 # ── Fix upstream build.sh for wasi-sdk 25 compatibility ──────────────────────
 # wasm-ld does not support --no-stack-first (it's the default; only --stack-first exists)
 sed -i 's/-Wl,--no-stack-first //' pglite-wasm/build.sh
-
-# ── Create pglite-${PG_BRANCH} symlink (needed by build scripts) ────────────
-if [ ! -L "pglite-${PG_BRANCH}" ] && [ ! -d "pglite-${PG_BRANCH}" ]; then
-    ln -sf pglite-wasm "pglite-${PG_BRANCH}"
-fi
-
-# ── Ensure PGROOT/bin exists and has wasm-objdump ────────────────────────────
-# (bind-mounts shadow Dockerfile-created files under /tmp/pglite)
-mkdir -p ${PGROOT}/bin ${PGROOT}/include
-cp -f /usr/local/bin/wasm-objdump ${PGROOT}/bin/wasm-objdump 2>/dev/null || true
 
 # ── Copy SDK port files to PREFIX/include (build-pgcore.sh expects them) ─────
 cp -f wasm-build/sdk_port.h ${PREFIX}/include/sdk_port.h 2>/dev/null || true
@@ -135,6 +118,9 @@ if [ -d wasm-build/sdk_port-wasi ]; then
     cp -f wasm-build/sdk_port-wasi/* ${PREFIX}/include/ 2>/dev/null || true
     cp -f wasm-build/sdk_port-wasi/* ${PGROOT}/include/ 2>/dev/null || true
 fi
+
+# ── Ensure PGROOT/bin and include exist ──────────────────────────────────────
+mkdir -p ${PGROOT}/bin ${PGROOT}/include
 
 # ── Create build/dist directories ───────────────────────────────────────────
 mkdir -p "${BUILD_PATH}" "${PG_DIST}" "${SDKROOT}/build/dumps"
