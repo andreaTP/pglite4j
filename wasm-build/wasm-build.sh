@@ -489,7 +489,7 @@ then
     cp /tmp/pglite/bin/pg_dump.wasi /tmp/sdk/dist/
 fi
 
-[ -d pglite-wasm ] && ln -s $(pwd)/pglite-wasm pglite-${PG_BRANCH}
+[ -d pglite-wasm ] && ln -sf $(pwd)/pglite-wasm pglite-${PG_BRANCH}
 
 # only build extra when targeting pglite-wasm .
 rm -f pglite-link.sh
@@ -600,6 +600,7 @@ then
 else
     for archive in ${PG_DIST_EXT}/*.tar
     do
+        [ -f "$archive" ] || continue
         echo "    packing extension $archive (docker build)"
         gzip -f -k -9 $archive
     done
