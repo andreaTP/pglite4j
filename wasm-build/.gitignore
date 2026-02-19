@@ -5,3 +5,4 @@ pglite-link.sh
 wasi.done
 docker/sdk/
 *.out
+postgresql-REL_17_5_WASM-pglite

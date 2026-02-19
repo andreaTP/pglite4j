@@ -334,10 +334,7 @@ then
     cat > pglite-link.sh <<END
 . ${PGROOT}/pgopts.sh
 . ${SDKROOT}/wasisdk/wasisdk_env.sh
-if ./pglite-wasm/build.sh
-then
-    echo "TODO: tests"
-fi
+./pglite-wasm/build.sh
 END
 
     chmod +x pglite-link.sh

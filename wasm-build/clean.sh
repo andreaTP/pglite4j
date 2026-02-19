@@ -13,6 +13,8 @@ sudo rm -rf \
     pglite-wasm \
     pglite-link.sh \
     wasi.done \
-    docker/sdk
+    docker/sdk \
+    *.out \
+    postgresql-REL_17_5_WASM-pglite
 
 echo "Clean complete."

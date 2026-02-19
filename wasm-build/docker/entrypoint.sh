@@ -107,6 +107,9 @@ if [ ! -f pglite-wasm/build.sh ]; then
     cp -Rv "postgresql-src/pglite-wasm"/* pglite-wasm/
 fi
 
+# ── Symlink so upstream build.sh can find the source as postgresql-${PG_BRANCH} ──
+ln -sf postgresql-src "postgresql-${PG_BRANCH}"
+
 # ── Fix upstream build.sh for wasi-sdk 25 compatibility ──────────────────────
 # wasm-ld does not support --no-stack-first (it's the default; only --stack-first exists)
 sed -i 's/-Wl,--no-stack-first //' pglite-wasm/build.sh
