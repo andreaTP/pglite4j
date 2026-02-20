@@ -1,0 +1,71 @@
+--- a/pg_main.c
++++ b/pg_main.c
+@@ -552,6 +552,68 @@
+     PGOPTIONS
+ */
+ 
++__attribute__((export_name("wizer.initialize")))
++void wizer_initialize() {
++    PDEBUG("# wizer_initialize: running full init sequence");
++
++    /* Replicate the essential parts of main_pre() since wizer calls
++     * this function directly instead of main().
++     *
++     * We hardcode paths here instead of using WASM_PREFIX because:
++     * 1) wasm_common.h #undefs PG_PREFIX after defining WASM_PREFIX,
++     *    but since macros expand lazily, WASM_PREFIX resolves to the
++     *    literal string "PG_PREFIX" instead of "/tmp/pglite".
++     * 2) wizer may not forward host environment variables to WASI,
++     *    so setdefault() can't fall back to getenv("PREFIX").
++     *
++     * Hardcoded variables (must match PGLite.java and build.sh):
++     *   PREFIX   = /tmp/pglite           -- PostgreSQL install prefix
++     *   PGUSER   = postgres              -- superuser name
++     *   PGDATA   = /tmp/pglite/base      -- data directory
++     *   PGDATABASE = template1           -- default database
++     *   PATH     = /tmp/pglite/bin       -- binary search path
++     *   progname = /tmp/pglite/bin/postgres
++     */
++    PREFIX = "/tmp/pglite";
++    PGUSER = "postgres";
++    PGDATA = "/tmp/pglite/base";
++
++    setenv("PREFIX", PREFIX, 1);
++    setenv("PGUSER", PGUSER, 1);
++    setenv("PGDATA", PGDATA, 1);
++
++    chdir("/");
++    mkdirp("/tmp");
++    mkdirp(PREFIX);
++
++    setenv("PGSYSCONFDIR", PREFIX, 1);
++    setenv("PGCLIENTENCODING", "UTF8", 1);
++    setenv("REPL", "N", 0);
++    setenv("LC_CTYPE", "en_US.UTF-8", 1);
++    setenv("TZ", "UTC", 0);
++    setenv("PGTZ", "UTC", 0);
++    setenv("PGDATABASE", "template1", 0);
++    setenv("PATH", "/tmp/pglite/bin", 1);
++    setenv("ENVIRONMENT", "wasm32_wasi_preview1", 1);
++
++    progname = get_progname("/tmp/pglite/bin/postgres");
++    static char *wizer_argv[] = { "/tmp/pglite/bin/postgres", NULL };
++    g_argv = wizer_argv;
++    g_argc = 1;
++
++    is_repl = false;
++    is_embed = true;
++
++    pgl_initdb();
++    pgl_backend();
++
++    /* the wire protocol port is lazily created by interactive_one()
++     * on its first call -- trigger it now so wizer snapshots the port */
++    interactive_write(0);
++    interactive_one();
++    PDEBUG("# wizer_initialize: done, ready for queries");
++}
++
+ // __attribute__((export_name("main")))
+  int main(int argc, char **argv) {
+      int exit_code = 0;

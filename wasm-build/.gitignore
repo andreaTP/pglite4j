@@ -1,6 +1,6 @@
 output/
 postgresql-src/
-pglite-wasm/
+/pglite-wasm/
 pglite-link.sh
 wasi.done
 docker/sdk/

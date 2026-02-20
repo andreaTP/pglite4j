@@ -1,0 +1,104 @@
+--- a/build.sh
++++ b/build.sh
+@@ -98,13 +98,14 @@
+          -c wasm-build/sdk_port-wasi/sdk_port-wasi-dlfcn.c \
+          -Wno-incompatible-pointer-types
+         then
+-            COPTS="$LOPTS" ${CC} ${CC_PGLITE} -ferror-limit=1 -Wl,--no-stack-first -Wl,--global-base=${GLOBAL_BASE_B} -o ${PG_DIST}/pglite.wasi \
++            COPTS="$LOPTS" ${CC} ${CC_PGLITE} -ferror-limit=1 -Wl,--global-base=${GLOBAL_BASE_B} -o ${PG_DIST}/pglite.wasi \
+              -nostartfiles ${PGINC} ${BUILD_PATH}/pglite.o \
+              ${BUILD_PATH}/sdk_port-wasi.o \
+              $LINKER $LIBPGCORE \
+              $LINK_ICU \
+              ${PG_BUILD}/${BUILD}/src/backend/snowball/libdict_snowball.a \
+              ${PG_BUILD}/${BUILD}/src/pl/plpgsql/src/libplpgsql.a \
++             ${SDKROOT}/wasi-vfs/libwasi_vfs.a \
+              -lxml2 -lz
+         else
+             echo "compilation of libpglite ${BUILD} support failed"
+@@ -112,10 +113,83 @@
+ 
+         if [ -f ${PG_DIST}/pglite.wasi ]
+         then
+-            echo "building minimal wasi FS"
++            echo "=== wasi-vfs: embedding filesystem into WASM binary ==="
+             cp ${PG_DIST}/pglite.wasi ${PGROOT}/bin/
+             touch ${PGROOT}/bin/initdb ${PGROOT}/bin/postgres
+-            tar -cvJ --files-from=${WORKSPACE}/wasmfs.txt > ${PG_DIST}/pglite-wasi.tar.xz
++
++            wasi-vfs pack ${PG_DIST}/pglite.wasi \
++                --dir ${PGROOT}::/tmp/pglite \
++                -o ${PG_DIST}/pglite-packed.wasi
++            mv ${PG_DIST}/pglite-packed.wasi ${PG_DIST}/pglite.wasi
++            echo "=== wasi-vfs: done ==="
++
++            echo "=== wizer: pre-initializing WASM module ==="
++            mkdir -p /tmp/wizer-pgdata
++            WIZER_BIN=$(which wizer 2>/dev/null || echo /usr/local/bin/wizer)
++            if [ -x "$WIZER_BIN" ]; then
++                # wizer needs the filesystem via --mapdir since wasi-vfs
++                # is intercepted inside the WASM module, not by the host WASI.
++                # Provide both the distribution (read-only) and a writable PGDATA.
++                mkdir -p /tmp/wizer-pgdata /tmp/wizer-dev /tmp/wizer-tmp
++                dd if=/dev/urandom of=/tmp/wizer-dev/urandom bs=128 count=1 2>/dev/null
++                env - TERM=dumb \
++                    PGDATA=/tmp/pglite/base \
++                    PREFIX=/tmp/pglite \
++                    PGSYSCONFDIR=/tmp/pglite \
++                    PGUSER=postgres \
++                    PGDATABASE=template1 \
++                    MODE=REACT \
++                    REPL=N \
++                    TZ=UTC \
++                    PGTZ=UTC \
++                    PATH=/tmp/pglite/bin \
++                    ENVIRONMENT=wasm32_wasi_preview1 \
++                    LC_CTYPE=en_US.UTF-8 \
++                    PGCLIENTENCODING=UTF8 \
++                    ${WIZER_BIN} ${PG_DIST}/pglite.wasi \
++                        --allow-wasi \
++                        --inherit-env true \
++                        --inherit-stdio true \
++                        --wasm-bulk-memory true \
++                        --mapdir /tmp::/tmp/wizer-tmp \
++                        --mapdir /tmp/pglite::${PGROOT} \
++                        --mapdir /tmp/pglite/base::/tmp/wizer-pgdata \
++                        --mapdir /dev::/tmp/wizer-dev \
++                        -o ${PG_DIST}/pglite-initialized.wasi \
++                    && mv ${PG_DIST}/pglite-initialized.wasi ${PG_DIST}/pglite.wasi \
++                    && echo "=== wizer: done ===" \
++                    || echo "=== wizer: FAILED (continuing without pre-initialization) ==="
++            else
++                echo "=== wizer: not found, skipping pre-initialization ==="
++            fi
++
++            echo "=== wasm-opt: optimizing WASM binary ==="
++            WASM_OPT_BIN=$(which wasm-opt 2>/dev/null || echo /usr/local/bin/wasm-opt)
++            if [ -x "$WASM_OPT_BIN" ]; then
++                ${WASM_OPT_BIN} -Oz --strip-debug \
++                    ${PG_DIST}/pglite.wasi \
++                    -o ${PG_DIST}/pglite-opt.wasi \
++                && mv ${PG_DIST}/pglite-opt.wasi ${PG_DIST}/pglite.wasi \
++                && echo "=== wasm-opt: done ===" \
++                || echo "=== wasm-opt: FAILED (continuing without optimization) ==="
++            else
++                echo "=== wasm-opt: not found, skipping optimization ==="
++            fi
++
++            echo "=== building minimal wasi FS ==="
++            cp ${PG_DIST}/pglite.wasi ${PGROOT}/bin/
++            # include pre-initialized PGDATA from wizer run
++            if [ -d /tmp/wizer-pgdata ] && [ -f /tmp/wizer-pgdata/PG_VERSION ]; then
++                echo "including pre-initialized PGDATA"
++                cp -r /tmp/wizer-pgdata ${PGROOT}/base
++            fi
++            if [ -d ${PGROOT}/base ]; then
++                # include pre-initialized PGDATA in the archive
++                find ${PGROOT}/base -type f > /tmp/wasmfs-pgdata.txt
++                cat ${WORKSPACE}/wasmfs.txt /tmp/wasmfs-pgdata.txt | tar -cvJ --files-from=- > ${PG_DIST}/pglite-wasi.tar.xz
++            else
++                tar -cvJ --files-from=${WORKSPACE}/wasmfs.txt > ${PG_DIST}/pglite-wasi.tar.xz
++            fi
+             mkdir -p ${PGL_BUILD_NATIVE}
+             cat > ${PGL_BUILD_NATIVE}/pglite-native.sh <<END
+ mkdir -p ${PGL_BUILD_NATIVE} ${PGL_DIST_NATIVE}
