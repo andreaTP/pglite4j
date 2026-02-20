@@ -29,6 +29,11 @@
       <artifactId>wasi</artifactId>
       <version>${chicory.version}</version>
     </dependency>
+    <dependency>
+      <groupId>io.roastedroot</groupId>
+      <artifactId>zerofs</artifactId>
+      <version>${zerofs.version}</version>
+    </dependency>
 
     <!-- ============= Testing ============= -->
     <dependency>

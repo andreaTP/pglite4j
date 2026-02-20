@@ -66,6 +66,7 @@
 
     <!-- runtime versions -->
     <chicory.version>1.6.1</chicory.version>
+    <zerofs.version>0.1.0</zerofs.version>
   </properties>
 
   <build>
