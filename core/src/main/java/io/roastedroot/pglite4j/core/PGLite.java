@@ -9,7 +9,10 @@ import com.dylibso.chicory.wasi.WasiPreview1;
 import com.dylibso.chicory.wasm.types.MemoryLimits;
 import io.roastedroot.zerofs.Configuration;
 import io.roastedroot.zerofs.ZeroFs;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
@@ -35,15 +38,13 @@ public final class PGLite implements AutoCloseable {
 
     private PGLite() {
         try {
-            Path pgDistDir = locatePgDist();
-
             this.fs =
                     ZeroFs.newFileSystem(
                             Configuration.unix().toBuilder().setAttributeViews("unix").build());
 
             Path pgroot = fs.getPath("tmp");
             java.nio.file.Files.createDirectories(pgroot);
-            Files.copyDirectory(pgDistDir, pgroot.resolve("pglite"));
+            extractDistToZeroFs(pgroot);
             Path pgdata = pgroot.resolve("pglite/base");
             java.nio.file.Files.createDirectories(pgdata);
             Path dev = fs.getPath("dev");
@@ -375,18 +376,39 @@ public final class PGLite implements AutoCloseable {
         return sb.toString();
     }
 
-    private static Path locatePgDist() {
-        // Resolve relative to working directory (development mode).
-        // TODO: once the distribution is embedded in the JAR as a classpath
-        // resource, add a resource-based lookup here.
-        Path devPath =
-                Path.of(System.getProperty("user.dir"))
-                        .resolve("../wasm-dist/tmp/pglite")
-                        .normalize();
-        if (java.nio.file.Files.isDirectory(devPath)) {
-            return devPath;
+    private static void extractDistToZeroFs(Path pgroot) throws IOException {
+        InputStream manifest = PGLite.class.getResourceAsStream("/pglite-files.txt");
+        if (manifest != null) {
+            try (BufferedReader reader =
+                    new BufferedReader(new InputStreamReader(manifest, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) {
+                        continue;
+                    }
+                    Path target = pgroot.resolve(line);
+                    java.nio.file.Files.createDirectories(target.getParent());
+                    try (InputStream in = PGLite.class.getResourceAsStream("/" + line)) {
+                        if (in != null) {
+                            java.nio.file.Files.copy(in, target);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Dev fallback: copy from filesystem
+            Path devPath =
+                    Path.of(System.getProperty("user.dir"))
+                            .resolve("../wasm-dist/tmp/pglite")
+                            .normalize();
+            if (java.nio.file.Files.isDirectory(devPath)) {
+                Files.copyDirectory(devPath, pgroot.resolve("pglite"));
+            } else {
+                throw new RuntimeException(
+                        "PGLite distribution not found." + " Run wasm-dist/unpack.sh first.");
+            }
         }
-        throw new RuntimeException("PGLite distribution not found. Run wasm-dist/unpack.sh first.");
     }
 
     public static final class Builder {
