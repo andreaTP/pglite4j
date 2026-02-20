@@ -72,17 +72,18 @@
 +                echo "=== wizer: not found, skipping pre-initialization ==="
 +            fi
 +
-+            echo "=== wasm-opt: optimizing WASM binary ==="
++            WASM_OPT_FLAGS="${WASM_OPT_FLAGS:--Oz --strip-debug}"
++            echo "=== wasm-opt: optimizing WASM binary (flags: ${WASM_OPT_FLAGS}) ==="
 +            WASM_OPT_BIN=$(which wasm-opt 2>/dev/null || echo /usr/local/bin/wasm-opt)
-+            if [ -x "$WASM_OPT_BIN" ]; then
-+                ${WASM_OPT_BIN} -Oz --strip-debug \
++            if [ -x "$WASM_OPT_BIN" ] && [ "${WASM_OPT_FLAGS}" != "none" ]; then
++                ${WASM_OPT_BIN} ${WASM_OPT_FLAGS} \
 +                    ${PG_DIST}/pglite.wasi \
 +                    -o ${PG_DIST}/pglite-opt.wasi \
 +                && mv ${PG_DIST}/pglite-opt.wasi ${PG_DIST}/pglite.wasi \
 +                && echo "=== wasm-opt: done ===" \
 +                || echo "=== wasm-opt: FAILED (continuing without optimization) ==="
 +            else
-+                echo "=== wasm-opt: not found, skipping optimization ==="
++                echo "=== wasm-opt: skipped ==="
 +            fi
 +
 +            echo "=== building minimal wasi FS ==="

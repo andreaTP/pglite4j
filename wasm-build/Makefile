@@ -6,8 +6,10 @@ WASM_FILE := $(OUTPUT_DIR)/pglite.wasi
 
 .PHONY: build clean unpack
 
+WASM_OPT_FLAGS ?= -Oz --strip-debug
+
 build:
-	$(SCRIPT_DIR)build.sh
+	WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)" $(SCRIPT_DIR)build.sh
 
 clean:
 	$(SCRIPT_DIR)clean.sh
@@ -24,10 +26,10 @@ unpack: $(ARCHIVE)
 	mkdir -p $(OUTPUT_DIR)/tmp
 	tar -xJf $(ARCHIVE) -C $(OUTPUT_DIR)/tmp
 	@echo "=== Copying pglite.wasi ==="
-	cp $(OUTPUT_DIR)/tmp/pglite/bin/pglite.wasi $(WASM_FILE)
+	cp $(OUTPUT_DIR)/tmp/tmp/pglite/bin/pglite.wasi $(WASM_FILE)
 	@echo "=== Copying distribution files to core/src/main/resources/pglite/ ==="
 	mkdir -p $(RESOURCES_DIR)
-	cp -r $(OUTPUT_DIR)/tmp/pglite $(RESOURCES_DIR)/pglite
+	cp -r $(OUTPUT_DIR)/tmp/tmp/pglite $(RESOURCES_DIR)/pglite
 	rm -f $(RESOURCES_DIR)/pglite/bin/pglite.wasi
 	@echo "=== Generating pglite-files.txt manifest ==="
 	cd $(RESOURCES_DIR) && find pglite -type f | sort > $(RESOURCES_DIR)/pglite-files.txt
