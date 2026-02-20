@@ -16,7 +16,7 @@
               -lxml2 -lz
          else
              echo "compilation of libpglite ${BUILD} support failed"
-@@ -112,10 +113,83 @@
+@@ -112,10 +113,84 @@
  
          if [ -f ${PG_DIST}/pglite.wasi ]
          then
