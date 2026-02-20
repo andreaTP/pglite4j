@@ -70,7 +70,7 @@
             </goals>
             <configuration>
               <name>io.roastedroot.pglite4j.core.PGLiteModule</name>
-              <wasmFile>../wasm-dist/pglite.wasi</wasmFile>
+              <wasmFile>../wasm-build/output/pglite.wasi</wasmFile>
               <interpreterFallback>WARN</interpreterFallback>
             </configuration>
           </execution>
@@ -88,7 +88,7 @@
             <phase>initialize</phase>
             <configuration>
               <target>
-                <property location="${project.basedir}/../wasm-dist/pglite.wasi" name="wasm.resource.path.raw"/>
+                <property location="${project.basedir}/../wasm-build/output/pglite.wasi" name="wasm.resource.path.raw"/>
                 <makeurl file="${wasm.resource.path.raw}" property="wasm.resource.url.temp"/>
                 <loadresource property="wasm.resource.url">
                   <propertyresource name="wasm.resource.url.temp"/>

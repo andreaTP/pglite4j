@@ -400,13 +400,14 @@ public final class PGLite implements AutoCloseable {
             // Dev fallback: copy from filesystem
             Path devPath =
                     Path.of(System.getProperty("user.dir"))
-                            .resolve("../wasm-dist/tmp/pglite")
+                            .resolve("../wasm-build/output/tmp/pglite")
                             .normalize();
             if (java.nio.file.Files.isDirectory(devPath)) {
                 Files.copyDirectory(devPath, pgroot.resolve("pglite"));
             } else {
                 throw new RuntimeException(
-                        "PGLite distribution not found." + " Run wasm-dist/unpack.sh first.");
+                        "PGLite distribution not found."
+                                + " Run 'make unpack' in wasm-build/ first.");
             }
         }
     }

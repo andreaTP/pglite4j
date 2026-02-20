@@ -28,6 +28,14 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: GPG_PASSPHRASE
 
+      - name: Build pglite WASM
+        working-directory: wasm-build
+        run: make build
+
+      - name: Unpack WASM distribution
+        working-directory: wasm-build
+        run: make unpack
+
       - name: Set release version
         run: mvn -B versions:set -DnewVersion=${{ inputs.version }} -DgenerateBackupPoms=false
 

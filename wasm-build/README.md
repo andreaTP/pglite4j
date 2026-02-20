@@ -10,10 +10,10 @@ All toolchain components are downloaded from upstream sources at build time -- n
 
 ```bash
 # 1. Build WASM (requires Docker)
-./build.sh
+make build
 
-# 2. Unpack into wasm-dist
-cd ../wasm-dist && ./unpack.sh && cd ../wasm-build
+# 2. Unpack into core/src/main/resources
+make unpack
 
 # 3. Build Java
 cd .. && mvn install

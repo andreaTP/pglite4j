@@ -399,7 +399,7 @@ Additional notes:
 
 - Try to keep all the resources self-contained in the JAR
 - use ZeroFS instead of the tmp folder so that everything is fully portable
-- Automate the unzip in wasm-dist, and find a way to automate including needed files in the bundle
+- Automate the unzip via `make unpack` in wasm-build/, and find a way to automate including needed files in the bundle
 - Follow sqlite4j code structure when in doubt — keep it familiar
 - follow up: optimize startup times with wasm-opt and wizer, and try wasi-sdk?
 
@@ -446,7 +446,7 @@ binary itself.
 **Build step:**
 ```bash
 wasi-vfs pack pglite.wasi \
-    --mapdir /tmp/pglite::wasm-dist/tmp/pglite \
+    --mapdir /tmp/pglite::wasm-build/output/tmp/pglite \
     -o pglite-packed.wasi
 ```
 

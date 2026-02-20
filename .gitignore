@@ -1,3 +1,6 @@
 target
 .claude
-wasm-dist/tmp/
+wasm-dist/
+wasm-build/output/
+core/src/main/resources/pglite/
+core/src/main/resources/pglite-files.txt

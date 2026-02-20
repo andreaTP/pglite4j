@@ -11,7 +11,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wasm-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pglite WASM
+        working-directory: wasm-build
+        run: make build
+
+      - name: Unpack WASM distribution
+        working-directory: wasm-build
+        run: make unpack
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pglite-wasm-dist
+          retention-days: 1
+          path: |
+            wasm-build/output/pglite.wasi
+            core/src/main/resources/pglite/
+            core/src/main/resources/pglite-files.txt
+
   build:
+    needs: wasm-build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -21,6 +45,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pglite-wasm-dist
 
       - name: Set up JDK ${{ matrix.java }}
         uses: actions/setup-java@v4
