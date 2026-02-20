@@ -2,6 +2,9 @@ FROM debian:bookworm-slim
 
 ARG WASI_SDK_VERSION=25.0
 ARG ZLIB_VERSION=1.3.1
+ARG WIZER_VERSION=10.0.0
+ARG WASI_VFS_VERSION=0.6.2
+ARG BINARYEN_VERSION=125
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV SDKROOT=/tmp/sdk
@@ -13,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     patch bison flex perl \
     python3 python3-dev \
     curl wget ca-certificates \
-    tar xz-utils file liblz4-tool \
+    tar xz-utils file liblz4-tool unzip \
     autoconf automake libtool pkg-config \
     findutils binutils coreutils \
     tzdata \
@@ -93,6 +96,35 @@ RUN cd /tmp && \
 
 # ── Create stub libxml2.a (XML is disabled but -lxml2 appears in link flags) ─
 RUN ${SDKROOT}/wasisdk/upstream/bin/llvm-ar rcs ${SDKROOT}/zlib/lib/libxml2.a
+
+# ── Download libwasi_vfs.a for embedding filesystem into WASM binary ──────────
+RUN cd /tmp && \
+    wget -q "https://github.com/kateinoigakukun/wasi-vfs/releases/download/v${WASI_VFS_VERSION}/libwasi_vfs-wasm32-unknown-unknown.zip" && \
+    unzip -o libwasi_vfs-wasm32-unknown-unknown.zip -d ${SDKROOT}/wasi-vfs && \
+    rm libwasi_vfs-wasm32-unknown-unknown.zip
+
+# ── Download wasi-vfs CLI ─────────────────────────────────────────────────────
+RUN cd /tmp && \
+    wget -q "https://github.com/kateinoigakukun/wasi-vfs/releases/download/v${WASI_VFS_VERSION}/wasi-vfs-cli-x86_64-unknown-linux-gnu.zip" && \
+    unzip -o wasi-vfs-cli-x86_64-unknown-linux-gnu.zip -d /usr/local/bin && \
+    chmod +x /usr/local/bin/wasi-vfs && \
+    rm wasi-vfs-cli-x86_64-unknown-linux-gnu.zip
+
+# ── Download wizer (WASM pre-initializer) ─────────────────────────────────────
+RUN cd /tmp && \
+    wget -q "https://github.com/bytecodealliance/wizer/releases/download/v${WIZER_VERSION}/wizer-v${WIZER_VERSION}-x86_64-linux.tar.xz" && \
+    tar xJf wizer-v${WIZER_VERSION}-x86_64-linux.tar.xz && \
+    mv wizer-v${WIZER_VERSION}-x86_64-linux/wizer /usr/local/bin/wizer && \
+    chmod +x /usr/local/bin/wizer && \
+    rm -rf wizer-v${WIZER_VERSION}-x86_64-linux*
+
+# ── Download binaryen (wasm-opt) ──────────────────────────────────────────────
+RUN cd /tmp && \
+    wget -q "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" && \
+    tar xzf binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz && \
+    mv binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt /usr/local/bin/wasm-opt && \
+    chmod +x /usr/local/bin/wasm-opt && \
+    rm -rf binaryen-version_${BINARYEN_VERSION}*
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

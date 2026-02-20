@@ -71,13 +71,7 @@
             <configuration>
               <name>io.roastedroot.pglite4j.core.PGLiteModule</name>
               <wasmFile>../wasm-dist/tmp/pglite/bin/pglite.wasi</wasmFile>
-              <!-- <interpreterFallback>WARN</interpreterFallback> -->
-              <interpretedFunctions>
-                <function>5706</function>
-                <function>11477</function>
-                <function>17646</function>
-                <function>25127</function>
-              </interpretedFunctions>
+              <interpreterFallback>WARN</interpreterFallback>
             </configuration>
           </execution>
         </executions>

@@ -402,3 +402,190 @@ Additional notes:
 - Automate the unzip in wasm-dist, and find a way to automate including needed files in the bundle
 - Follow sqlite4j code structure when in doubt — keep it familiar
 - follow up: optimize startup times with wasm-opt and wizer, and try wasi-sdk?
+
+---
+
+## Design Decisions
+
+### Embedded resources — no external pgDistDir
+
+All PGlite resources (WASM binary, share/, extensions) must be embedded
+in the JAR. There is no user-facing configuration for a distribution
+directory. The builder takes no path argument — everything is loaded from
+the classpath at build time (via Chicory's AOT compiler) and from
+embedded resources at runtime (via ZeroFS populated from classpath).
+
+---
+
+## Startup Optimization Plan — wasi-vfs + wizer
+
+### Problem
+
+Current startup is slow (~58 s in tests) because:
+1. Filesystem setup: copying the PG distribution into ZeroFS at runtime
+2. `pgl_initdb()`: creates the database cluster from scratch every boot
+3. `pgl_backend()`: initializes the PostgreSQL backend
+4. Wire protocol handshake (auth, ReadyForQuery)
+
+Steps 1-4 are identical every time for a fresh in-memory database. They
+can all be done once at build time and snapshotted.
+
+### Solution: two build-time tools
+
+#### 1. wasi-vfs — embed the filesystem into the WASM binary
+
+**What:** [wasi-vfs](https://github.com/kateinoigakukun/wasi-vfs) packs
+a host directory tree into a WASM binary as a read-only virtual
+filesystem. At runtime the WASM module sees normal files via WASI
+fd_read/path_open — no host directory mapping needed.
+
+**How it helps:** Eliminates the runtime ZeroFS copy of share/,
+extensions, timezone data, config files. These become part of the WASM
+binary itself.
+
+**Build step:**
+```bash
+wasi-vfs pack pglite.wasi \
+    --mapdir /tmp/pglite::wasm-dist/tmp/pglite \
+    -o pglite-packed.wasi
+```
+
+**Constraint:** wasi-vfs produces a read-only filesystem. PGDATA (the
+mutable database cluster) still needs a writable filesystem at runtime
+(ZeroFS). This is fine — wasi-vfs handles the static resources, ZeroFS
+handles the mutable PGDATA.
+
+#### 2. wizer — pre-initialize the WASM module
+
+**What:** [Wizer](https://github.com/bytecodealliance/wizer) executes a
+WASM module's initialization function, then snapshots the entire memory
+state (globals, linear memory) into a new WASM binary. The next
+instantiation starts from the warm snapshot.
+
+**How it helps:** Runs `pgl_initdb()`, `pgl_backend()`, and the wire
+protocol handshake once at build time. The resulting binary boots
+directly into a ReadyForQuery state.
+
+**Build step:**
+```bash
+wizer pglite-packed.wasi \
+    --allow-wasi \
+    --init-func _start \
+    --keep-init-func false \
+    -o pglite-initialized.wasi
+```
+
+This requires an initialization entry point in PGlite that:
+1. Calls `pgl_initdb()`
+2. Calls `pgl_backend()` (catches the expected trap)
+3. Enables wire mode, performs the handshake
+4. Returns — wizer snapshots everything at this point
+
+### Reference implementations
+
+| Project | What they do | Reference |
+|---------|-------------|-----------|
+| **trino-wasm-python** | wasi-vfs packs Python stdlib into WASM, then wizer snapshots the initialized CPython interpreter. Pipeline: compile → `wasi-vfs pack` → `wizer` → deploy. Uses `--allow-wasi --init-func _start --keep-init-func false`. | [trinodb/trino-wasm-python](https://github.com/trinodb/trino-wasm-python) |
+| **lumis4j** | Rust syntax highlighter compiled to WASM. Wizer pre-loads all language parsers via `wizer.initialize()` export. Then Chicory AOT compiles to JVM bytecode. Pipeline: `cargo build` → `wizer --allow-wasi` → `wasm-opt -Oz` → `chicory-compiler-maven-plugin`. | [roastedroot/lumis4j](https://github.com/roastedroot/lumis4j) |
+
+### Proposed build pipeline
+
+```
+1. Docker build (existing)
+   └── pglite.wasi (24 MB, raw)
+
+2. wasi-vfs pack
+   ├── Embed: share/postgresql/, lib/postgresql/, password, timezonesets
+   ├── Mount point: /tmp/pglite
+   └── Output: pglite-packed.wasi
+
+3. wizer pre-initialize
+   ├── Run: pgl_initdb + pgl_backend + handshake
+   ├── Snapshot: warm memory state with initialized cluster
+   └── Output: pglite-initialized.wasi
+
+4. wasm-opt (optional, binaryen)
+   ├── Flags: -Oz --strip-debug
+   └── Output: pglite-opt.wasi (size-optimized)
+
+5. Chicory AOT compile (existing, maven plugin)
+   ├── Input: pglite-opt.wasi
+   └── Output: PGLiteModule.java (JVM bytecode)
+```
+
+### Impact on Java code
+
+With wasi-vfs + wizer, the Java `PGLite` constructor simplifies to:
+- No more archive extraction
+- No more copying files into ZeroFS (static resources are in the binary)
+- ZeroFS only needed for PGDATA (mutable, writable)
+- No `pgl_initdb()` / `pgl_backend()` / handshake calls — already done
+- Constructor just creates the Instance and it's ready for queries
+
+### Status: IMPLEMENTED
+
+The full pipeline (wasi-vfs + wizer + wasm-opt) is working and
+integrated into the Docker build. Test passes: `SELECT 1 => 1`.
+
+### Hardcoded variables
+
+The following values are hardcoded in three places and **must stay in
+sync**: `pg_main.c` (`wizer_initialize`), `PGLite.java` (constants),
+and `build.sh` (wizer `env -` block).
+
+| Variable | Value | Used by |
+|----------|-------|---------|
+| `PREFIX` | `/tmp/pglite` | Install prefix for PG binaries, share, libs |
+| `PGDATA` | `/tmp/pglite/base` | Mutable database cluster directory |
+| `PGUSER` | `postgres` | Superuser name |
+| `PGDATABASE` | `template1` | Default database |
+| `PATH` | `/tmp/pglite/bin` | Binary search path |
+| `PGSYSCONFDIR` | `/tmp/pglite` | Server config directory |
+| `PGCLIENTENCODING` | `UTF8` | Client encoding |
+| `LC_CTYPE` | `en_US.UTF-8` | Locale for character classification |
+| `TZ` / `PGTZ` | `UTC` | Timezone |
+| `REPL` | `N` | Disable interactive REPL |
+| `ENVIRONMENT` | `wasm32_wasi_preview1` | WASI platform identifier |
+| `MODE` | `REACT` | PGlite operational mode |
+
+**Why hardcoded:** The `WASM_PREFIX` macro in `wasm_common.h` has a bug
+where `#undef PG_PREFIX` runs before lazy macro expansion of
+`WASM_PREFIX`, causing it to resolve to the literal string `"PG_PREFIX"`
+instead of `"/tmp/pglite"`. Additionally, wizer doesn't forward host
+environment variables to the WASI module by default (requires
+`--inherit-env true`). Hardcoding avoids both issues.
+
+### Key implementation details
+
+- **wizer replaces `_start` with `unreachable`**: After pre-initialization,
+  `_start`/`main()` must not be called. Java uses `withStart(false)` on
+  the Chicory Instance.Builder.
+- **Memory size**: The wizer snapshot expands initial memory to ~4029 pages
+  (~252 MB). Java uses `withMemoryLimits(new MemoryLimits(4029))`.
+- **8 functions use interpreter fallback**: Functions that exceed JVM method
+  size limits fall back to the Chicory interpreter via
+  `<interpreterFallback>WARN</interpreterFallback>`.
+- **wizer needs writable `/tmp`**: The initdb `pgl_popen` writes to
+  `/tmp/initdb.boot.txt` and `/tmp/initdb.single.txt`. The wizer
+  invocation maps `--mapdir /tmp::/tmp/wizer-tmp` for this.
+
+### Resolved open questions
+
+1. **wizer + PGlite compatibility:** Resolved. `pgl_backend()` does NOT
+   trap (the `proc_exit(66)` is a fake shutdown that returns cleanly).
+   A `wizer.initialize` export was added to `pg_main.c` that runs the
+   full init sequence: `pgl_initdb()`, `pgl_backend()`,
+   `interactive_write(0)`, `interactive_one()`.
+
+2. **PGDATA separation:** Resolved. wasi-vfs embeds the static
+   distribution (share/, lib/, password). The writable PGDATA is
+   provided at runtime via ZeroFS. The wizer snapshot includes a
+   pre-initialized PGDATA that is also packed into the tar archive.
+
+3. **wasi-vfs + wasi-sdk compatibility:** Resolved. wasi-sdk 25 +
+   wasi-vfs 0.6.2 work together. `libwasi_vfs.a` is linked at compile
+   time, and `wasi-vfs pack` embeds the filesystem post-link.
+
+4. **Binary size:** The wizer-initialized binary is ~126 MB (includes
+   the full memory snapshot). After wasm-opt, this is reduced somewhat.
+   The tar.xz archive compresses well.

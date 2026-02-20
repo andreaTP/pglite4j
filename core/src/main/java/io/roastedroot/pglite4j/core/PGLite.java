@@ -20,14 +20,23 @@ import java.util.List;
 
 @WasmModuleInterface(WasmResource.absoluteFile)
 public final class PGLite implements AutoCloseable {
+    // Hardcoded paths -- must match wizer_initialize() in pg_main.c and build.sh.
+    // See pg_main.c for the full rationale (WASM_PREFIX macro bug + wizer env).
+    private static final String PG_PREFIX = "/tmp/pglite";
+    private static final String PG_DATA = PG_PREFIX + "/base";
+    private static final String PG_USER = "postgres";
+    private static final String PG_DATABASE = "template1";
+
     private final Instance instance;
     private final WasiPreview1 wasi;
     private final PGLite_ModuleExports exports;
     private final FileSystem fs;
     private int bufferAddr;
 
-    private PGLite(Path pgDistDir) {
+    private PGLite() {
         try {
+            Path pgDistDir = locatePgDist();
+
             this.fs =
                     ZeroFs.newFileSystem(
                             Configuration.unix().toBuilder().setAttributeViews("unix").build());
@@ -50,47 +59,44 @@ public final class PGLite implements AutoCloseable {
                                             .withDirectory(pgdata.toString(), pgdata)
                                             .withDirectory(dev.toString(), dev)
                                             .withEnvironment("ENVIRONMENT", "wasm32_wasi_preview1")
-                                            .withEnvironment("PREFIX", "/tmp/pglite")
-                                            .withEnvironment("PGDATA", "/tmp/pglite/base")
-                                            .withEnvironment("PGSYSCONFDIR", "/tmp/pglite")
-                                            .withEnvironment("PGUSER", "postgres")
-                                            .withEnvironment("PGDATABASE", "template1")
+                                            .withEnvironment("PREFIX", PG_PREFIX)
+                                            .withEnvironment("PGDATA", PG_DATA)
+                                            .withEnvironment("PGSYSCONFDIR", PG_PREFIX)
+                                            .withEnvironment("PGUSER", PG_USER)
+                                            .withEnvironment("PGDATABASE", PG_DATABASE)
                                             .withEnvironment("MODE", "REACT")
                                             .withEnvironment("REPL", "N")
                                             .withEnvironment("TZ", "UTC")
                                             .withEnvironment("PGTZ", "UTC")
-                                            .withEnvironment("PATH", "/tmp/pglite/bin")
+                                            .withEnvironment("PATH", PG_PREFIX + "/bin")
                                             .withArguments(
                                                     List.of(
-                                                            "/tmp/pglite/bin/postgres",
+                                                            PG_PREFIX + "/bin/postgres",
                                                             "--single",
-                                                            "postgres"))
+                                                            PG_USER))
                                             .build())
                             .build();
 
             var imports = ImportValues.builder().addFunction(wasi.toHostFunctions()).build();
+            // The WASM binary is pre-initialized with wizer: initdb, backend
+            // startup, and wire protocol port creation have already been
+            // snapshotted into the module's linear memory.  Skip _start
+            // (wizer replaces it with unreachable) and the init calls.
             this.instance =
                     Instance.builder(PGLiteModule.load())
                             .withImportValues(imports)
                             .withMachineFactory(PGLiteModule::create)
-                            .withMemoryLimits(new MemoryLimits(100))
+                            .withStart(false)
+                            .withMemoryLimits(new MemoryLimits(4029))
                             .build();
             this.exports = new PGLite_ModuleExports(this.instance);
-
-            // Init sequence
-            exports.pglInitdb();
-            try {
-                exports.pglBackend();
-            } catch (RuntimeException e) {
-                // pgl_backend may trap on OpenPipeStream — expected in WASI
-            }
 
             int channel = exports.getChannel();
             this.bufferAddr = exports.getBufferAddr(channel);
 
             // Wire protocol handshake
             exports.interactiveWrite(0);
-            int pendingLen = wireSendCma(wireStartup("postgres", "template1"));
+            int pendingLen = wireSendCma(wireStartup(PG_USER, PG_DATABASE));
 
             boolean ready = false;
             for (int round = 0; round < 100 && !ready; round++) {
@@ -103,7 +109,7 @@ public final class PGLite implements AutoCloseable {
                         byte[] salt = {
                             (byte) auth[1], (byte) auth[2], (byte) auth[3], (byte) auth[4]
                         };
-                        pendingLen = wireSendCma(wireMd5Password("password", "postgres", salt));
+                        pendingLen = wireSendCma(wireMd5Password("password", PG_USER, salt));
                     } else if (auth[0] == 3) { // Cleartext
                         pendingLen = wireSendCma(wirePassword("password"));
                     }
@@ -137,7 +143,6 @@ public final class PGLite implements AutoCloseable {
                 pendingLen = 0;
             }
             if (!replies.isEmpty()) {
-                // Check if we got ReadyForQuery in the last response
                 byte[] last = replies.get(replies.size() - 1);
                 if (wireHasReadyForQuery(last)) {
                     break;
@@ -145,7 +150,6 @@ public final class PGLite implements AutoCloseable {
             }
         }
 
-        // Concatenate all replies
         int totalLen = 0;
         for (byte[] r : replies) {
             totalLen += r.length;
@@ -371,21 +375,25 @@ public final class PGLite implements AutoCloseable {
         return sb.toString();
     }
 
-    public static final class Builder {
-        private Path pgDistDir;
+    private static Path locatePgDist() {
+        // Resolve relative to working directory (development mode).
+        // TODO: once the distribution is embedded in the JAR as a classpath
+        // resource, add a resource-based lookup here.
+        Path devPath =
+                Path.of(System.getProperty("user.dir"))
+                        .resolve("../wasm-dist/tmp/pglite")
+                        .normalize();
+        if (java.nio.file.Files.isDirectory(devPath)) {
+            return devPath;
+        }
+        throw new RuntimeException("PGLite distribution not found. Run wasm-dist/unpack.sh first.");
+    }
 
+    public static final class Builder {
         private Builder() {}
 
-        public Builder withPgDistDir(Path pgDistDir) {
-            this.pgDistDir = pgDistDir;
-            return this;
-        }
-
         public PGLite build() {
-            if (pgDistDir == null) {
-                throw new IllegalStateException("pgDistDir must be set");
-            }
-            return new PGLite(pgDistDir);
+            return new PGLite();
         }
     }
 }

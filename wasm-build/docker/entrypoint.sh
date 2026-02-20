@@ -107,12 +107,28 @@ if [ ! -f pglite-wasm/build.sh ]; then
     cp -Rv "postgresql-src/pglite-wasm"/* pglite-wasm/
 fi
 
+# ── Apply pglite-wasm patches if not already done ────────────────────────────
+cd pglite-wasm
+if [ -f "pglite-wasm.patched" ]; then
+    echo "pglite-wasm already patched."
+else
+    echo "Applying pglite-wasm patches..."
+    if [ -d "${WORKSPACE}/patches/pglite-wasm" ]; then
+        for one in "${WORKSPACE}/patches/pglite-wasm"/*.diff; do
+            if patch -p1 < "$one"; then
+                echo "  Applied: $(basename $one)"
+            else
+                echo "FATAL: failed to apply pglite-wasm patch: $one"
+                exit 1
+            fi
+        done
+    fi
+    touch "pglite-wasm.patched"
+fi
+cd ${WORKSPACE}
+
 # ── Symlink so upstream build.sh can find the source as postgresql-${PG_BRANCH} ──
 ln -sf postgresql-src "postgresql-${PG_BRANCH}"
-
-# ── Fix upstream build.sh for wasi-sdk 25 compatibility ──────────────────────
-# wasm-ld does not support --no-stack-first (it's the default; only --stack-first exists)
-sed -i 's/-Wl,--no-stack-first //' pglite-wasm/build.sh
 
 # ── Copy SDK port files to PREFIX/include (build-pgcore.sh expects them) ─────
 cp -f wasm-build/sdk_port.h ${PREFIX}/include/sdk_port.h 2>/dev/null || true
