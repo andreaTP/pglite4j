@@ -14,7 +14,7 @@ public class PGLiteTest {
             assertNotNull(result);
             assertTrue(result.length > 0);
 
-            String data = PGLite.wireParseDataRows(result);
+            String data = PgWireCodec.parseDataRows(result);
             System.out.println("SELECT 1 => " + data);
             System.out.println("Data hex dump:");
             System.out.println(hexDump(result));
