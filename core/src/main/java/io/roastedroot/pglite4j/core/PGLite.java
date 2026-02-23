@@ -5,7 +5,6 @@ import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.wasi.WasiOptions;
 import com.dylibso.chicory.wasi.WasiPreview1;
-import com.dylibso.chicory.wasm.types.MemoryLimits;
 import io.roastedroot.zerofs.Configuration;
 import io.roastedroot.zerofs.ZeroFs;
 import java.io.BufferedReader;
@@ -32,6 +31,7 @@ public final class PGLite implements AutoCloseable {
     private final PGLite_ModuleExports exports;
     private final FileSystem fs;
     private int bufferAddr;
+    private int pendingWireLen;
 
     private PGLite() {
         try {
@@ -76,42 +76,44 @@ public final class PGLite implements AutoCloseable {
                             .build();
 
             var imports = ImportValues.builder().addFunction(wasi.toHostFunctions()).build();
-            // The WASM binary is pre-initialized with wizer: initdb, backend
-            // startup, and wire protocol port creation have already been
-            // snapshotted into the module's linear memory.  Skip _start
-            // (wizer replaces it with unreachable) and the init calls.
             this.instance =
                     Instance.builder(PGLiteModule.load())
                             .withImportValues(imports)
                             .withMachineFactory(PGLiteModule::create)
-                            .withStart(false)
-                            .withMemoryLimits(new MemoryLimits(4029))
                             .build();
             this.exports = new PGLite_ModuleExports(this.instance);
 
+            // Full init sequence (no wizer pre-initialization)
+            int idbStatus = exports.pglInitdb();
+            System.err.println("PGLite: pgl_initdb returned " + idbStatus);
+            try {
+                exports.pglBackend();
+                System.err.println("PGLite: pgl_backend returned normally");
+            } catch (RuntimeException e) {
+                System.err.println("PGLite: pgl_backend threw: " + e.getMessage());
+            }
+
             int channel = exports.getChannel();
             this.bufferAddr = exports.getBufferAddr(channel);
+            System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
 
             // Wire protocol handshake
             exports.interactiveWrite(0);
-            int pendingLen = wireSendCma(PgWireCodec.startupMessage(PG_USER, PG_DATABASE));
+            wireSendCma(PgWireCodec.startupMessage(PG_USER, PG_DATABASE));
 
             boolean ready = false;
             for (int round = 0; round < 100 && !ready; round++) {
                 exports.interactiveOne();
-                byte[] resp = wireRecvCma(pendingLen);
+                byte[] resp = wireRecvCma();
                 if (resp != null) {
-                    pendingLen = 0;
                     int[] auth = PgWireCodec.parseAuth(resp);
                     if (auth[0] == 5) { // MD5 password
                         byte[] salt = {
                             (byte) auth[1], (byte) auth[2], (byte) auth[3], (byte) auth[4]
                         };
-                        pendingLen =
-                                wireSendCma(
-                                        PgWireCodec.md5PasswordMessage("password", PG_USER, salt));
+                        wireSendCma(PgWireCodec.md5PasswordMessage("password", PG_USER, salt));
                     } else if (auth[0] == 3) { // Cleartext
-                        pendingLen = wireSendCma(PgWireCodec.passwordMessage("password"));
+                        wireSendCma(PgWireCodec.passwordMessage("password"));
                     }
                     if (PgWireCodec.hasReadyForQuery(resp)) {
                         ready = true;
@@ -126,41 +128,28 @@ public final class PGLite implements AutoCloseable {
         }
     }
 
+    /**
+     * Forward raw PostgreSQL wire protocol bytes through the WASM instance and collect all
+     * responses. Follows the pglite-oxide forward_wire pattern: processes interaction ticks until no
+     * more data is produced, then returns. This works for both complete queries (which end with
+     * ReadyForQuery) and partial handshake exchanges (e.g. auth challenge).
+     */
     public byte[] execProtocolRaw(byte[] message) {
-        int pendingLen = wireSendCma(message);
+        if (message.length > 0) {
+            wireSendCma(message);
+        }
         List<byte[]> replies = new ArrayList<>();
 
         for (int tick = 0; tick < 256; tick++) {
-            byte[] resp = wireRecvCma(pendingLen);
-            if (resp != null) {
-                replies.add(resp);
-                pendingLen = 0;
-            }
+            boolean producedBefore = collectReply(replies);
             exports.interactiveOne();
-            resp = wireRecvCma(pendingLen);
-            if (resp != null) {
-                replies.add(resp);
-                pendingLen = 0;
-            }
-            if (!replies.isEmpty()) {
-                byte[] last = replies.get(replies.size() - 1);
-                if (PgWireCodec.hasReadyForQuery(last)) {
-                    break;
-                }
+            boolean producedAfter = collectReply(replies);
+            if (!producedBefore && !producedAfter) {
+                break;
             }
         }
 
-        int totalLen = 0;
-        for (byte[] r : replies) {
-            totalLen += r.length;
-        }
-        byte[] result = new byte[totalLen];
-        int pos = 0;
-        for (byte[] r : replies) {
-            System.arraycopy(r, 0, result, pos, r.length);
-            pos += r.length;
-        }
-        return result;
+        return concat(replies);
     }
 
     public byte[] query(String sql) {
@@ -192,21 +181,45 @@ public final class PGLite implements AutoCloseable {
 
     // === CMA transport ===
 
-    private int wireSendCma(byte[] msg) {
+    private void wireSendCma(byte[] msg) {
         exports.useWire(1);
         exports.memory().write(bufferAddr, msg);
         exports.interactiveWrite(msg.length);
-        return msg.length;
+        pendingWireLen = msg.length;
     }
 
-    private byte[] wireRecvCma(int pendingLen) {
+    private byte[] wireRecvCma() {
         int len = exports.interactiveRead();
         if (len <= 0) {
             return null;
         }
-        byte[] resp = exports.memory().readBytes(bufferAddr + pendingLen + 1, len);
+        byte[] resp = exports.memory().readBytes(bufferAddr + pendingWireLen + 1, len);
         exports.interactiveWrite(0);
+        pendingWireLen = 0;
         return resp;
+    }
+
+    private boolean collectReply(List<byte[]> replies) {
+        byte[] resp = wireRecvCma();
+        if (resp != null) {
+            replies.add(resp);
+            return true;
+        }
+        return false;
+    }
+
+    private static byte[] concat(List<byte[]> replies) {
+        int totalLen = 0;
+        for (byte[] r : replies) {
+            totalLen += r.length;
+        }
+        byte[] result = new byte[totalLen];
+        int pos = 0;
+        for (byte[] r : replies) {
+            System.arraycopy(r, 0, result, pos, r.length);
+            pos += r.length;
+        }
+        return result;
     }
 
     // === Resource extraction ===
