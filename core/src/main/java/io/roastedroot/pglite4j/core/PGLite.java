@@ -19,8 +19,7 @@ import java.util.List;
 
 @WasmModuleInterface(WasmResource.absoluteFile)
 public final class PGLite implements AutoCloseable {
-    // Hardcoded paths -- must match wizer_initialize() in pg_main.c and build.sh.
-    // See pg_main.c for the full rationale (WASM_PREFIX macro bug + wizer env).
+    // Hardcoded paths -- must match the WASI build configuration.
     private static final String PG_PREFIX = "/tmp/pglite";
     private static final String PG_DATA = PG_PREFIX + "/base";
     private static final String PG_USER = "postgres";
@@ -76,6 +75,7 @@ public final class PGLite implements AutoCloseable {
                             .build();
 
             var imports = ImportValues.builder().addFunction(wasi.toHostFunctions()).build();
+
             this.instance =
                     Instance.builder(PGLiteModule.load())
                             .withImportValues(imports)
@@ -83,7 +83,6 @@ public final class PGLite implements AutoCloseable {
                             .build();
             this.exports = new PGLite_ModuleExports(this.instance);
 
-            // Full init sequence (no wizer pre-initialization)
             int idbStatus = exports.pglInitdb();
             System.err.println("PGLite: pgl_initdb returned " + idbStatus);
             try {
@@ -93,12 +92,13 @@ public final class PGLite implements AutoCloseable {
                 System.err.println("PGLite: pgl_backend threw: " + e.getMessage());
             }
 
+            exports.interactiveWrite(0);
+
             int channel = exports.getChannel();
             this.bufferAddr = exports.getBufferAddr(channel);
             System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
 
             // Wire protocol handshake
-            exports.interactiveWrite(0);
             wireSendCma(PgWireCodec.startupMessage(PG_USER, PG_DATABASE));
 
             boolean ready = false;

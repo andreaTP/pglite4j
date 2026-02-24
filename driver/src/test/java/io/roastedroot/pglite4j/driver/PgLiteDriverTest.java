@@ -72,13 +72,13 @@ public class PgLiteDriverTest {
                             + "  age INTEGER"
                             + ")");
         }
-        // Verify table exists via information_schema
+        // Verify table exists via pg_class (information_schema may not work on PGLite)
         try (Statement stmt = conn.createStatement();
                 ResultSet rs =
                         stmt.executeQuery(
-                                "SELECT table_name FROM information_schema.tables"
-                                        + " WHERE table_schema = 'public'"
-                                        + "   AND table_name = 'test_users'")) {
+                                "SELECT relname FROM pg_class"
+                                        + " WHERE relname = 'test_users'"
+                                        + "   AND relkind = 'r'")) {
             assertTrue(rs.next());
             assertEquals("test_users", rs.getString(1));
         }
