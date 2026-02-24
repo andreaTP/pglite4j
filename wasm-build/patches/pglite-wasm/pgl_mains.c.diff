@@ -1,0 +1,27 @@
+--- a/pgl_mains.c
++++ b/pgl_mains.c
+@@ -335,6 +335,8 @@
+
+ 	CreateSharedMemoryAndSemaphores();
+
++PDEBUG("# pgl_mains: after CreateSharedMemoryAndSemaphores");
++	whereToSendOutput = DestDebug;
+ 	/*
+ 	 * Remember stand-alone backend startup time,roughly at the same point
+ 	 * during startup that postmaster does so.
+@@ -348,6 +350,7 @@
+ 	InitProcess();
+
+ // main
++PDEBUG("# pgl_mains: after InitProcess");
+ 	SetProcessingMode(InitProcessing);
+
+ 	/* Early initialization */
+@@ -355,6 +358,7 @@
+ async_db_change:;
+
+ PDEBUG("# 167");
++PDEBUG("# pgl_mains: after BaseInit / at async_db_change");
+ 	/*
+ 	 * General initialization.
+ 	 *

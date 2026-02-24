@@ -522,10 +522,30 @@ With wasi-vfs + wizer, the Java `PGLite` constructor simplifies to:
 - No `pgl_initdb()` / `pgl_backend()` / handshake calls — already done
 - Constructor just creates the Instance and it's ready for queries
 
-### Status: IMPLEMENTED
+### Status: DISABLED — wasi-vfs blocks PGDATA access
 
-The full pipeline (wasi-vfs + wizer + wasm-opt) is working and
-integrated into the Docker build. Test passes: `SELECT 1 => 1`.
+The full pipeline (wasi-vfs + wizer + wasm-opt) is built and integrated
+into the Docker build. `SELECT 1` works, but **DDL (CREATE TABLE, etc.)
+fails** because wasi-vfs intercepts ALL WASI filesystem calls — not
+just paths under the mapped directories. When PostgreSQL tries to open
+`/tmp/pglite/base/global/pg_control` (PGDATA), wasi-vfs returns ENOENT
+because PGDATA was not embedded (it's mutable/writable). It never
+delegates to the host WASI (ZeroFS). Mapping specific subdirectories
+(`share`, `lib`, `bin`, `etc`) instead of the whole `/tmp/pglite` tree
+did not help — wasi-vfs still intercepts everything.
+
+**Current approach:** Link WITHOUT `libwasi_vfs.a`, skip wasi-vfs pack
+and wizer. Run full init from Java (`pgl_initdb`, `pgl_backend`,
+handshake). All files provided via ZeroFS from classpath resources.
+This is slower (no pre-initialization snapshot) but correct.
+
+**TODO — re-enable wizer + wasi-vfs:** Once DDL/DML queries work
+end-to-end on the raw binary, revisit wasi-vfs with one of:
+1. Patch wasi-vfs to fall through to host WASI for unmapped files
+2. Embed PGDATA as read-only in wasi-vfs, copy to writable ZeroFS at
+   runtime, and remap the WASI preopen for `/tmp/pglite/base`
+3. Use a different approach: only wizer (no wasi-vfs), provide all
+   files via ZeroFS at runtime — wizer's `--mapdir` handles init
 
 ### Hardcoded variables
 

@@ -32,6 +32,14 @@
  		recursion_depth--;
 +#if defined(__wasi__)
 +        fprintf(stderr, "# 547: PG_RE_THROW(ERROR : %d) ignored\r\n", recursion_depth);
++        if (errordata_stack_depth >= 0) {
++            ErrorData *__edata = &errordata[errordata_stack_depth];
++            fprintf(stderr, "# PG ERROR [%s:%d] %s: %s\r\n",
++                __edata->filename ? __edata->filename : "?",
++                __edata->lineno,
++                __edata->funcname ? __edata->funcname : "?",
++                __edata->message ? __edata->message : "(no message)");
++        }
 +        abort();
 +#else
  		PG_RE_THROW();
