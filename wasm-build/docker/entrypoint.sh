@@ -98,6 +98,25 @@ else
     done
     touch "postgresql-src.patched"
 fi
+# ── Always apply custom postgresql-pglite patches (our additions to the fork) ─
+if [ ! -f "postgresql-pglite-custom.patched" ]; then
+    if [ -d "${WORKSPACE}/patches/postgresql-pglite" ]; then
+        echo "Applying custom postgresql-pglite patches..."
+        for one in "${WORKSPACE}/patches/postgresql-pglite"/*.diff; do
+            if patch --forward --dry-run -p1 < "$one" > /dev/null 2>&1; then
+                if patch --forward -p1 < "$one"; then
+                    echo "  Applied: $(basename $one)"
+                else
+                    echo "FATAL: failed to apply custom patch: $one"
+                    exit 1
+                fi
+            else
+                echo "  Skipped (already applied): $(basename $one)"
+            fi
+        done
+    fi
+    touch "postgresql-pglite-custom.patched"
+fi
 cd ${WORKSPACE}
 
 # ── Set up pglite-wasm directory from cloned repo ────────────────────────────

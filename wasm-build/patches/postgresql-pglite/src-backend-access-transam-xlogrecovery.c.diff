@@ -1,0 +1,17 @@
+--- a/src/backend/access/transam/xlogrecovery.c
++++ b/src/backend/access/transam/xlogrecovery.c
+@@ -5046,3 +5046,14 @@
+ 	else
+ 		recoveryTarget = RECOVERY_TARGET_UNSET;
+ }
++
++/* Close recovery file descriptor for wizer snapshot cleanup. */
++void
++pgl_xlogrecovery_close_fd(void)
++{
++    if (readFile >= 0)
++    {
++        close(readFile);
++        readFile = -1;
++    }
++}
