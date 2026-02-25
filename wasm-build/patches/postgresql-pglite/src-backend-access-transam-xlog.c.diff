@@ -1,0 +1,17 @@
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -9500,3 +9500,14 @@
+ 	XLogCtl->WalWriterSleeping = sleeping;
+ 	SpinLockRelease(&XLogCtl->info_lck);
+ }
++
++/* Close WAL file descriptor for wizer snapshot cleanup. */
++void
++pgl_xlog_close_fd(void)
++{
++    if (openLogFile >= 0)
++    {
++        close(openLogFile);
++        openLogFile = -1;
++    }
++}

@@ -1,0 +1,17 @@
+--- a/src/include/port/wasm_common.h
++++ b/src/include/port/wasm_common.h
+@@ -25,10 +25,10 @@
+ /* --------------- how to configure those when installed ? ---------------- */
+
+ // socket emulation via file, need to go in PGDATA for nodefs mount in web mode
+-#define PGS_ILOCK "/tmp/pglite/base/.s.PGSQL.5432.lock.in"
+-#define PGS_IN    "/tmp/pglite/base/.s.PGSQL.5432.in"
+-#define PGS_OLOCK "/tmp/pglite/base/.s.PGSQL.5432.lock.out"
+-#define PGS_OUT   "/tmp/pglite/base/.s.PGSQL.5432.out"
++#define PGS_ILOCK "/pgdata/.s.PGSQL.5432.lock.in"
++#define PGS_IN    "/pgdata/.s.PGSQL.5432.in"
++#define PGS_OLOCK "/pgdata/.s.PGSQL.5432.lock.out"
++#define PGS_OUT   "/pgdata/.s.PGSQL.5432.out"
+
+
+

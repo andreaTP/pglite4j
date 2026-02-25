@@ -9,3 +9,50 @@
               -nostartfiles ${PGINC} ${BUILD_PATH}/pglite.o \
               ${BUILD_PATH}/sdk_port-wasi.o \
               $LINKER $LIBPGCORE \
+@@ -112,8 +112,44 @@
+
+         if [ -f ${PG_DIST}/pglite.wasi ]
+         then
+-            echo "building minimal wasi FS"
++            echo "=== running wizer to pre-initialize PostgreSQL ==="
++            ls -lh ${PG_DIST}/pglite.wasi
++            mkdir -p /pgdata
++            env -i \
++                ENVIRONMENT=wasm32_wasi_preview1 \
++                PREFIX=/tmp/pglite \
++                PGDATA=/pgdata \
++                PGSYSCONFDIR=/tmp/pglite \
++                PGUSER=postgres \
++                PGDATABASE=template1 \
++                MODE=REACT \
++                REPL=N \
++                TZ=UTC \
++                PGTZ=UTC \
++                PATH=/tmp/pglite/bin \
++                /usr/local/bin/wizer ${PG_DIST}/pglite.wasi \
++                    --allow-wasi \
++                    --wasm-bulk-memory true \
++                    --inherit-stdio true \
++                    --inherit-env true \
++                    --mapdir /tmp::/tmp \
++                    --mapdir /pgdata::/pgdata \
++                    --mapdir /dev::/dev \
++                    -o ${PG_DIST}/pglite-wizer.wasi
++            WIZER_RC=$?
++            if [ $WIZER_RC -ne 0 ] || [ ! -s ${PG_DIST}/pglite-wizer.wasi ]; then
++                echo "FATAL: wizer failed (exit code $WIZER_RC)"
++                ls -lh ${PG_DIST}/pglite-wizer.wasi 2>/dev/null || echo "  output file does not exist"
++                exit 1
++            fi
++            echo "wizer output:"
++            ls -lh ${PG_DIST}/pglite-wizer.wasi
++            mv ${PG_DIST}/pglite-wizer.wasi ${PG_DIST}/pglite.wasi
++
+             cp ${PG_DIST}/pglite.wasi ${PGROOT}/bin/
+             touch ${PGROOT}/bin/initdb ${PGROOT}/bin/postgres
+-            tar -cvJ --files-from=${WORKSPACE}/wasmfs.txt > ${PG_DIST}/pglite-wasi.tar.xz
++            echo "=== creating distribution archive ==="
++            echo "pgdata contents:"
++            ls /pgdata/ || echo "WARNING: /pgdata is empty!"
++            tar -cvJ -C / tmp/pglite/bin/pglite.wasi tmp/pglite/share tmp/pglite/lib pgdata > ${PG_DIST}/pglite-wasi.tar.xz
+             mkdir -p ${PGL_BUILD_NATIVE}

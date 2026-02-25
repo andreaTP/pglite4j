@@ -5,6 +5,7 @@ import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.wasi.WasiOptions;
 import com.dylibso.chicory.wasi.WasiPreview1;
+import com.dylibso.chicory.wasm.types.MemoryLimits;
 import io.roastedroot.zerofs.Configuration;
 import io.roastedroot.zerofs.ZeroFs;
 import java.io.BufferedReader;
@@ -21,7 +22,7 @@ import java.util.List;
 public final class PGLite implements AutoCloseable {
     // Hardcoded paths -- must match the WASI build configuration.
     private static final String PG_PREFIX = "/tmp/pglite";
-    private static final String PG_DATA = PG_PREFIX + "/base";
+    private static final String PG_DATA = "/pgdata";
     private static final String PG_USER = "postgres";
     private static final String PG_DATABASE = "template1";
 
@@ -38,12 +39,12 @@ public final class PGLite implements AutoCloseable {
                     ZeroFs.newFileSystem(
                             Configuration.unix().toBuilder().setAttributeViews("unix").build());
 
-            Path pgroot = fs.getPath("tmp");
-            java.nio.file.Files.createDirectories(pgroot);
-            extractDistToZeroFs(pgroot);
-            Path pgdata = pgroot.resolve("pglite/base");
-            java.nio.file.Files.createDirectories(pgdata);
-            Path dev = fs.getPath("dev");
+            // Extract all distribution files (pgdata + share + lib) into ZeroFS.
+            extractDistToZeroFs(fs);
+            Path tmp = fs.getPath("/tmp");
+            java.nio.file.Files.createDirectories(tmp);
+            Path pgdata = fs.getPath("/pgdata");
+            Path dev = fs.getPath("/dev");
             java.nio.file.Files.createDirectories(dev);
             java.nio.file.Files.write(dev.resolve("urandom"), new byte[128]);
 
@@ -52,9 +53,10 @@ public final class PGLite implements AutoCloseable {
                             .withOptions(
                                     WasiOptions.builder()
                                             .inheritSystem()
-                                            .withDirectory(pgroot.toString(), pgroot)
-                                            .withDirectory(pgdata.toString(), pgdata)
-                                            .withDirectory(dev.toString(), dev)
+                                            // Preopens must match wizer order: /tmp, /pgdata, /dev
+                                            .withDirectory("/tmp", tmp)
+                                            .withDirectory("/pgdata", pgdata)
+                                            .withDirectory("/dev", dev)
                                             .withEnvironment("ENVIRONMENT", "wasm32_wasi_preview1")
                                             .withEnvironment("PREFIX", PG_PREFIX)
                                             .withEnvironment("PGDATA", PG_DATA)
@@ -76,22 +78,18 @@ public final class PGLite implements AutoCloseable {
 
             var imports = ImportValues.builder().addFunction(wasi.toHostFunctions()).build();
 
+            // Skip _start (already executed by wizer at build time).
             this.instance =
                     Instance.builder(PGLiteModule.load())
                             .withImportValues(imports)
                             .withMachineFactory(PGLiteModule::create)
+                            .withStart(false)
+                            .withMemoryLimits(new MemoryLimits(2571))
                             .build();
             this.exports = new PGLite_ModuleExports(this.instance);
 
-            int idbStatus = exports.pglInitdb();
-            System.err.println("PGLite: pgl_initdb returned " + idbStatus);
-            try {
-                exports.pglBackend();
-                System.err.println("PGLite: pgl_backend returned normally");
-            } catch (RuntimeException e) {
-                System.err.println("PGLite: pgl_backend threw: " + e.getMessage());
-            }
-
+            // pgl_initdb + pgl_backend already executed by wizer at build time.
+            // closeAllVfds() was called at end of wizer to prevent stale fd PANICs.
             exports.interactiveWrite(0);
 
             int channel = exports.getChannel();
@@ -224,12 +222,12 @@ public final class PGLite implements AutoCloseable {
 
     // === Resource extraction ===
 
-    private static void extractDistToZeroFs(Path pgroot) throws IOException {
+    private static void extractDistToZeroFs(FileSystem fs) throws IOException {
         InputStream manifest = PGLite.class.getResourceAsStream("/pglite-files.txt");
         if (manifest == null) {
             throw new RuntimeException(
                     "PGLite distribution not found on classpath."
-                            + " Ensure pglite-files.txt and pglite/ resources are bundled.");
+                            + " Ensure pglite-files.txt and pgdata/ resources are bundled.");
         }
         try (BufferedReader reader =
                 new BufferedReader(new InputStreamReader(manifest, StandardCharsets.UTF_8))) {
@@ -239,7 +237,7 @@ public final class PGLite implements AutoCloseable {
                 if (line.isEmpty()) {
                     continue;
                 }
-                Path target = pgroot.resolve(line);
+                Path target = fs.getPath("/" + line);
                 java.nio.file.Files.createDirectories(target.getParent());
                 try (InputStream in = PGLite.class.getResourceAsStream("/" + line)) {
                     if (in != null) {

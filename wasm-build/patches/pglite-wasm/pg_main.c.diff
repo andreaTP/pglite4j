@@ -1,0 +1,40 @@
+--- a/pg_main.c
++++ b/pg_main.c
+@@ -553,6 +553,37 @@
+ */
+ 
+ // __attribute__((export_name("main")))
++__attribute__((export_name("wizer.initialize")))
++void wizer_initialize(void) {
++    setenv("PREFIX", "/tmp/pglite", 1);
++    setenv("PGDATA", "/pgdata", 1);
++    setenv("PGSYSCONFDIR", "/tmp/pglite", 1);
++    setenv("PGUSER", "postgres", 1);
++    setenv("PGDATABASE", "template1", 1);
++    setenv("REPL", "N", 1);
++    setenv("TZ", "UTC", 1);
++    setenv("PGTZ", "UTC", 1);
++    char *argv[] = { "postgres", NULL };
++    int argc = 1;
++    main_pre(argc, argv);
++    progname = get_progname(argv[0]);
++    startup_hacks(progname);
++    g_argv = argv;
++    g_argc = argc;
++    is_embed = true;
++    pgl_initdb();
++    pgl_backend();
++    /* Close all file descriptors that would be stale after wizer snapshot.
++     * VFDs are managed by closeAllVfds(). WAL and recovery fds are raw
++     * kernel fds stored in static variables - closed by our custom helpers. */
++    extern void closeAllVfds(void);
++    extern void pgl_xlog_close_fd(void);
++    extern void pgl_xlogrecovery_close_fd(void);
++    closeAllVfds();
++    pgl_xlog_close_fd();
++    pgl_xlogrecovery_close_fd();
++}
++
+  int main(int argc, char **argv) {
+      int exit_code = 0;
+      main_pre(argc, argv);

@@ -21,10 +21,15 @@ rm -rf "${SCRIPT_DIR}/docker/sdk"
 # Clean previous build if requested
 if [ "${CLEAN:-false}" = "true" ]; then
     echo "=== Cleaning previous build ==="
-    docker run --rm -v "${OUTPUT_DIR}:/data" alpine:3.21 rm -rf /data/sdk-build /data/sdk-dist /data/pglite
+    docker run --rm -v "${OUTPUT_DIR}:/data" alpine:3.21 rm -rf /data/sdk-build /data/sdk-dist /data/pglite /data/pgdata
 fi
 
-mkdir -p "${OUTPUT_DIR}/sdk-build" "${OUTPUT_DIR}/sdk-dist" "${OUTPUT_DIR}/pglite"
+# Always re-apply patches by removing sentinel files and temporary patched dirs.
+# These are root-owned (created inside docker), so use docker to clean them.
+docker run --rm -v "${SCRIPT_DIR}:/workspace:rw" alpine:3.21 sh -c \
+    "rm -rf /workspace/pglite-wasm && rm -f /workspace/postgresql-src/postgresql-src.patched && rm -f /workspace/postgresql-src/postgresql-pglite-custom.patched"
+
+mkdir -p "${OUTPUT_DIR}/sdk-build" "${OUTPUT_DIR}/sdk-dist" "${OUTPUT_DIR}/pglite" "${OUTPUT_DIR}/pgdata"
 
 echo "=== Running WASI build ==="
 docker run --rm \
@@ -32,6 +37,7 @@ docker run --rm \
     -v "${OUTPUT_DIR}/sdk-build:/tmp/sdk/build:rw" \
     -v "${OUTPUT_DIR}/sdk-dist:/tmp/sdk/dist:rw" \
     -v "${OUTPUT_DIR}/pglite:/tmp/pglite:rw" \
+    -v "${OUTPUT_DIR}/pgdata:/pgdata:rw" \
     -e DEBUG="${DEBUG:-true}" \
     -e PG_VERSION="${PG_VERSION:-17.5}" \
     -e PG_BRANCH="${PG_BRANCH:-REL_17_5_WASM-pglite}" \
