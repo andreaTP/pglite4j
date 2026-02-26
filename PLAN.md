@@ -264,7 +264,9 @@ PgLiteDriver.connect(url, props)
 
 **URL scheme:** `jdbc:pglite:<data-path>`
 - `jdbc:pglite:memory://` — in-memory database (fresh each JVM)
-- `jdbc:pglite:/tmp/mydb` — persistent data directory
+- `jdbc:pglite:/tmp/mydb` — file-backed persistent data directory (future)
+
+> **TODO:** Currently only `memory://` is supported. We want to also support file-backed PostgreSQL where the PGDATA directory is persisted to disk, so that data survives JVM restarts. This would require changes to how ZeroFS is configured (or using real filesystem paths instead of ZeroFS for PGDATA) and potentially adjusting the wizer snapshot to handle pre-existing PGDATA on startup.
 
 **ServiceLoader registration:** `META-INF/services/java.sql.Driver` containing:
 ```
