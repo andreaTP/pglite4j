@@ -96,32 +96,6 @@ public final class PGLite implements AutoCloseable {
             int channel = exports.getChannel();
             this.bufferAddr = exports.getBufferAddr(channel);
             System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
-
-            // Wire protocol handshake
-            wireSendCma(PgWireCodec.startupMessage(PG_USER, PG_DATABASE));
-
-            boolean ready = false;
-            for (int round = 0; round < 100 && !ready; round++) {
-                exports.interactiveOne();
-                byte[] resp = wireRecvCma();
-                if (resp != null) {
-                    int[] auth = PgWireCodec.parseAuth(resp);
-                    if (auth[0] == 5) { // MD5 password
-                        byte[] salt = {
-                            (byte) auth[1], (byte) auth[2], (byte) auth[3], (byte) auth[4]
-                        };
-                        wireSendCma(PgWireCodec.md5PasswordMessage("password", PG_USER, salt));
-                    } else if (auth[0] == 3) { // Cleartext
-                        wireSendCma(PgWireCodec.passwordMessage("password"));
-                    }
-                    if (PgWireCodec.hasReadyForQuery(resp)) {
-                        ready = true;
-                    }
-                }
-            }
-            if (!ready) {
-                throw new RuntimeException("PostgreSQL handshake failed");
-            }
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize PGLite", e);
         }
@@ -149,10 +123,6 @@ public final class PGLite implements AutoCloseable {
         }
 
         return concat(replies);
-    }
-
-    public byte[] query(String sql) {
-        return execProtocolRaw(PgWireCodec.queryMessage(sql));
     }
 
     public static Builder builder() {
