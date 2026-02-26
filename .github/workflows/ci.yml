@@ -32,7 +32,6 @@ jobs:
           path: |
             wasm-build/output/pglite.wasi
             core/src/main/resources/pgdata/
-            core/src/main/resources/tmp/
             core/src/main/resources/pglite-files.txt
 
   build:
