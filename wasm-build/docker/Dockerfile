@@ -3,6 +3,7 @@ FROM debian:bookworm-slim
 ARG WASI_SDK_VERSION=25.0
 ARG ZLIB_VERSION=1.3.1
 ARG BINARYEN_VERSION=125
+ARG WASMTIME_VERSION=27.0.0
 ARG WIZER_VERSION=10.0.0
 ARG WASI_VFS_VERSION=0.6.2
 
@@ -104,6 +105,14 @@ RUN cd /tmp && \
     mv binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt /usr/local/bin/wasm-opt && \
     chmod +x /usr/local/bin/wasm-opt && \
     rm -rf binaryen-version_${BINARYEN_VERSION}*
+
+# ── Download wasmtime (WASI runtime for pre-initializing pgdata) ──────────────
+RUN cd /tmp && \
+    wget -q "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" && \
+    tar xJf wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz && \
+    mv wasmtime-v${WASMTIME_VERSION}-x86_64-linux/wasmtime /usr/local/bin/wasmtime && \
+    chmod +x /usr/local/bin/wasmtime && \
+    rm -rf wasmtime-v${WASMTIME_VERSION}-x86_64-linux*
 
 # ── Download wizer (pre-initializer for WASM) ────────────────────────────────
 RUN cd /tmp && \

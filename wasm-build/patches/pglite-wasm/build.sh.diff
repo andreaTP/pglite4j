@@ -9,14 +9,56 @@
               -nostartfiles ${PGINC} ${BUILD_PATH}/pglite.o \
               ${BUILD_PATH}/sdk_port-wasi.o \
               $LINKER $LIBPGCORE \
-@@ -112,8 +112,44 @@
-
+@@ -106,7 +106,7 @@
+              $LINK_ICU \
+              ${PG_BUILD}/${BUILD}/src/backend/snowball/libdict_snowball.a \
+              ${PG_BUILD}/${BUILD}/src/pl/plpgsql/src/libplpgsql.a \
+-             -lxml2 -lz
++             -lxml2 -lz -lwasi_vfs
+         else
+             echo "compilation of libpglite ${BUILD} support failed"
+         fi
+@@ -114,8 +114,91 @@
+ 
          if [ -f ${PG_DIST}/pglite.wasi ]
          then
 -            echo "building minimal wasi FS"
 +            echo "=== running wizer to pre-initialize PostgreSQL ==="
 +            ls -lh ${PG_DIST}/pglite.wasi
 +            mkdir -p /pgdata
++
++            # Pre-populate /pgdata using wasmtime if not already initialized.
++            # wizer_initialize() calls pgl_initdb() which ends with
++            # pg_proc_exit(66) -- that traps the WASM instance, preventing
++            # wizer from creating a snapshot.  Running initdb as a normal
++            # process via wasmtime lets pg_proc_exit terminate gracefully.
++            # On the subsequent wizer run, pgl_initdb() detects PG_VERSION
++            # and skips initdb, so wizer_initialize() returns cleanly.
++            if [ ! -f /pgdata/PG_VERSION ]; then
++                echo "=== pre-init: populating /pgdata via wasmtime ==="
++                wasmtime run \
++                    --env INITDB_ONLY=1 \
++                    --env PREFIX=/tmp/pglite \
++                    --env PGDATA=/pgdata \
++                    --env PGSYSCONFDIR=/tmp/pglite \
++                    --env PGUSER=postgres \
++                    --env PGDATABASE=template1 \
++                    --env TZ=UTC \
++                    --env PGTZ=UTC \
++                    --dir /tmp \
++                    --dir /pgdata \
++                    --dir /dev \
++                    ${PG_DIST}/pglite.wasi || true
++                if [ ! -f /pgdata/PG_VERSION ]; then
++                    echo "FATAL: wasmtime pre-init failed to populate /pgdata"
++                    ls -la /pgdata/
++                    exit 1
++                fi
++                echo "pre-init: /pgdata populated successfully"
++            else
++                echo "pgdata already initialized, skipping pre-init"
++            fi
++
 +            env -i \
 +                ENVIRONMENT=wasm32_wasi_preview1 \
 +                PREFIX=/tmp/pglite \
@@ -48,11 +90,25 @@
 +            ls -lh ${PG_DIST}/pglite-wizer.wasi
 +            mv ${PG_DIST}/pglite-wizer.wasi ${PG_DIST}/pglite.wasi
 +
++            echo "=== embedding read-only files with wasi-vfs ==="
++            wasi-vfs pack ${PG_DIST}/pglite.wasi \
++                --dir /tmp/pglite/share::/tmp/pglite/share \
++                --dir /tmp/pglite/lib::/tmp/pglite/lib \
++                -o ${PG_DIST}/pglite-packed.wasi
++            PACK_RC=$?
++            if [ $PACK_RC -ne 0 ] || [ ! -s ${PG_DIST}/pglite-packed.wasi ]; then
++                echo "FATAL: wasi-vfs pack failed (exit code $PACK_RC)"
++                exit 1
++            fi
++            echo "wasi-vfs pack output:"
++            ls -lh ${PG_DIST}/pglite-packed.wasi
++            mv ${PG_DIST}/pglite-packed.wasi ${PG_DIST}/pglite.wasi
++
              cp ${PG_DIST}/pglite.wasi ${PGROOT}/bin/
              touch ${PGROOT}/bin/initdb ${PGROOT}/bin/postgres
 -            tar -cvJ --files-from=${WORKSPACE}/wasmfs.txt > ${PG_DIST}/pglite-wasi.tar.xz
 +            echo "=== creating distribution archive ==="
 +            echo "pgdata contents:"
 +            ls /pgdata/ || echo "WARNING: /pgdata is empty!"
-+            tar -cvJ -C / tmp/pglite/bin/pglite.wasi tmp/pglite/share tmp/pglite/lib pgdata > ${PG_DIST}/pglite-wasi.tar.xz
++            tar -cvJ -C / tmp/pglite/bin/pglite.wasi pgdata > ${PG_DIST}/pglite-wasi.tar.xz
              mkdir -p ${PGL_BUILD_NATIVE}

@@ -39,7 +39,8 @@ public final class PGLite implements AutoCloseable {
                     ZeroFs.newFileSystem(
                             Configuration.unix().toBuilder().setAttributeViews("unix").build());
 
-            // Extract all distribution files (pgdata + share + lib) into ZeroFS.
+            // Extract pgdata files into ZeroFS.
+            // (share + lib are embedded in the WASM binary via wasi-vfs)
             extractDistToZeroFs(fs);
             Path tmp = fs.getPath("/tmp");
             java.nio.file.Files.createDirectories(tmp);
@@ -227,7 +228,8 @@ public final class PGLite implements AutoCloseable {
         if (manifest == null) {
             throw new RuntimeException(
                     "PGLite distribution not found on classpath."
-                            + " Ensure pglite-files.txt and pgdata/ resources are bundled.");
+                            + " Ensure pglite-files.txt and pgdata/ resources are bundled."
+                            + " (share/ and lib/ are embedded in the WASM binary via wasi-vfs)");
         }
         try (BufferedReader reader =
                 new BufferedReader(new InputStreamReader(manifest, StandardCharsets.UTF_8))) {

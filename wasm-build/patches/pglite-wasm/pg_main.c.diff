@@ -1,8 +1,8 @@
 --- a/pg_main.c
 +++ b/pg_main.c
-@@ -553,6 +553,37 @@
+@@ -553,6 +553,41 @@
  */
- 
+
  // __attribute__((export_name("main")))
 +__attribute__((export_name("wizer.initialize")))
 +void wizer_initialize(void) {
@@ -33,8 +33,31 @@
 +    closeAllVfds();
 +    pgl_xlog_close_fd();
 +    pgl_xlogrecovery_close_fd();
++    /* Clear environment before wizer snapshot so that wasi-vfs pack's
++     * internal clearenv() doesn't crash freeing stale heap pointers. */
++    extern int clearenv(void);
++    clearenv();
 +}
 +
   int main(int argc, char **argv) {
       int exit_code = 0;
       main_pre(argc, argv);
+@@ -564,6 +599,18 @@
+      g_argv = argv;
+      g_argc = argc;
+
++#if defined(__wasi__)
++     /* When INITDB_ONLY=1, run pgl_initdb() and exit.  Used by the build
++      * to pre-populate /pgdata with wasmtime before the wizer snapshot.
++      * pgl_initdb() calls pg_proc_exit(66) which terminates the instance;
++      * wasmtime handles that gracefully, unlike wizer which needs a clean
++      * return from its init function. */
++     if (getenv("INITDB_ONLY") && getenv("INITDB_ONLY")[0] == '1') {
++         is_embed = true;
++         pgl_initdb();
++         return 0;
++     }
++#endif
+      is_repl = strlen(getenv("REPL")) && getenv("REPL")[0] != 'N';
+      is_embed = true;
+
