@@ -53,7 +53,8 @@ public final class PGLite implements AutoCloseable {
                     WasiPreview1.builder()
                             .withOptions(
                                     WasiOptions.builder()
-                                            .inheritSystem()
+                                            // Enable for debugging:
+                                            // .inheritSystem()
                                             // Preopens must match wizer order: /tmp, /pgdata, /dev
                                             .withDirectory("/tmp", tmp)
                                             .withDirectory("/pgdata", pgdata)
