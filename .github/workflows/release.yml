@@ -1,32 +1,27 @@
-name: Release
+name: release
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Release version (e.g. 0.1.0)'
+      release-version:
+        description: 'Version being released'
         required: true
-        type: string
+      branch:
+        description: 'Branch to release from'
+        required: true
+        default: 'main'
+
+permissions:
+  contents: write
 
 jobs:
   release:
+    name: Release
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-          server-id: central
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: GPG_PASSPHRASE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
       - name: Build pglite WASM
         working-directory: wasm-build
@@ -36,31 +31,55 @@ jobs:
         working-directory: wasm-build
         run: make unpack
 
-      - name: Set release version
-        run: mvn -B versions:set -DnewVersion=${{ inputs.version }} -DgenerateBackupPoms=false
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: 11
+          distribution: 'temurin'
+          server-id: central
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_CENTRAL_TOKEN
+          gpg-private-key: ${{ secrets.java_gpg_secret_key }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
-      - name: Build and verify
-        run: mvn -B install
+      - id: install-secret-key
+        name: Install gpg secret key
+        run: |
+          cat <(echo -e "${{ secrets.java_gpg_secret_key }}") | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
 
-      - name: Deploy to Maven Central
-        run: mvn -B deploy -Prelease -DskipTests
+      - name: Compile
+        run: mvn --batch-mode clean install -DskipTests
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Set the version
+        run: |
+          mvn versions:set -DgenerateBackupPoms=false -DnewVersion=${{ github.event.inputs.release-version }}
+          git add .
+          git commit -m "Release version update ${{ github.event.inputs.release-version }}"
+          git push
+          git tag ${{ github.event.inputs.release-version }}
+          git push origin ${{ github.event.inputs.release-version }}
         env:
-          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tag release
+      - name: Release to Maven Central
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Release ${{ inputs.version }}"
-          git tag "v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          mvn --batch-mode deploy -Prelease -DskipTests=true
+        env:
+          MAVEN_USERNAME: ${{ secrets.central_username }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.central_password }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.java_gpg_passphrase }}
 
-      - name: Reset to SNAPSHOT
+      - name: Back to Snapshot
         run: |
-          mvn -B versions:set -DnewVersion=999-SNAPSHOT -DgenerateBackupPoms=false
-          git add -A
-          git commit -m "Reset to 999-SNAPSHOT"
-          git push origin main
+          mvn versions:set -DgenerateBackupPoms=false -DnewVersion=999-SNAPSHOT
+          git add .
+          git commit -m "Snapshot version update"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
