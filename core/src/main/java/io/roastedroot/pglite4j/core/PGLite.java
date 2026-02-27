@@ -14,6 +14,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,11 +44,11 @@ public final class PGLite implements AutoCloseable {
             // (share + lib are embedded in the WASM binary via wasi-vfs)
             extractDistToZeroFs(fs);
             Path tmp = fs.getPath("/tmp");
-            java.nio.file.Files.createDirectories(tmp);
+            Files.createDirectories(tmp);
             Path pgdata = fs.getPath("/pgdata");
             Path dev = fs.getPath("/dev");
-            java.nio.file.Files.createDirectories(dev);
-            java.nio.file.Files.write(dev.resolve("urandom"), new byte[128]);
+            Files.createDirectories(dev);
+            Files.write(dev.resolve("urandom"), new byte[128]);
 
             this.wasi =
                     WasiPreview1.builder()
@@ -96,7 +97,7 @@ public final class PGLite implements AutoCloseable {
 
             int channel = exports.getChannel();
             this.bufferAddr = exports.getBufferAddr(channel);
-            System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
+            // System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize PGLite", e);
         }
@@ -193,7 +194,6 @@ public final class PGLite implements AutoCloseable {
     }
 
     // === Resource extraction ===
-
     private static void extractDistToZeroFs(FileSystem fs) throws IOException {
         InputStream manifest = PGLite.class.getResourceAsStream("/pglite-files.txt");
         if (manifest == null) {
@@ -211,10 +211,10 @@ public final class PGLite implements AutoCloseable {
                     continue;
                 }
                 Path target = fs.getPath("/" + line);
-                java.nio.file.Files.createDirectories(target.getParent());
+                Files.createDirectories(target.getParent());
                 try (InputStream in = PGLite.class.getResourceAsStream("/" + line)) {
                     if (in != null) {
-                        java.nio.file.Files.copy(in, target);
+                        Files.copy(in, target);
                     }
                 }
             }

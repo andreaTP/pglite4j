@@ -17,6 +17,7 @@ clean:
 	rm -f $(WASM_FILE)
 	rm -rf $(RESOURCES_DIR)/pgdata
 	rm -f $(RESOURCES_DIR)/pglite-files.txt
+	rm -f $(RESOURCES_DIR)/pglite.wasi
 
 unpack: $(ARCHIVE)
 	@echo "=== Unpacking pglite-wasi.tar.xz ==="

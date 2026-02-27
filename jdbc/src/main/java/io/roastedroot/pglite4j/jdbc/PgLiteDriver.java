@@ -4,6 +4,7 @@ import io.roastedroot.pglite4j.core.PGLite;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -133,7 +134,8 @@ public final class PgLiteDriver implements Driver {
                     handleConnection(socket);
                 } catch (IOException e) {
                     if (running) {
-                        System.err.println("PgLiteDriver: accept error: " + e.getMessage());
+                        throw new UncheckedIOException(
+                                "PgLiteDriver: accept error: " + e.getMessage(), e);
                     }
                 }
             }
@@ -159,7 +161,8 @@ public final class PgLiteDriver implements Driver {
                 }
             } catch (IOException e) {
                 if (running) {
-                    System.err.println("PgLiteDriver: connection error: " + e.getMessage());
+                    throw new UncheckedIOException(
+                            "PgLiteDriver: connection error: " + e.getMessage(), e);
                 }
             } finally {
                 try {

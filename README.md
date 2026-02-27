@@ -106,7 +106,7 @@ pglite4j/
 - [ ] **CMA buffer size is fixed** — large messages that exceed the CMA buffer (~12 MB total, ~16 KB per single message) are not yet handled via the file transport fallback
 - [ ] **Limited extensions** — only `plpgsql` and `dict_snowball` are bundled; adding more requires rebuilding the WASM binary
 - [ ] **Startup time** — first connection has some overhead it can be optimized more
-- [ ] **Binary size** — the WASM binary + pgdata resources add ~10 Mb to the classpath
+- [ ] **Binary size** — the WASM binary + pgdata resources add several MBs to the classpath
 - [ ] **Error recovery** — `clear_error()` integration for automatic transaction recovery is not yet wired up
 
 ## Building from source
