@@ -40,8 +40,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
-        java: [ 11, 25 ]
+        os: [ ubuntu-latest ]
+        java: [ 21 ]
 
     steps:
       - uses: actions/checkout@v4
