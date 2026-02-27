@@ -2,7 +2,7 @@
 
 Embedded PostgreSQL in plain Java bytecode. No containers, no native binaries, no external processes: just add a dependency and use a JDBC URL.
 
-> **Warning**
+> **⚠️ Warning**
 > This project is highly experimental and in a very early stage of development. APIs may change, features are incomplete, and it is not yet recommended for production use. Feedback and contributions are very welcome!
 
 ## How it works
