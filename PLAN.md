@@ -264,7 +264,9 @@ PgLiteDriver.connect(url, props)
 
 **URL scheme:** `jdbc:pglite:<data-path>`
 - `jdbc:pglite:memory://` — in-memory database (fresh each JVM)
-- `jdbc:pglite:/tmp/mydb` — persistent data directory
+- `jdbc:pglite:/tmp/mydb` — file-backed persistent data directory (future)
+
+> **TODO:** Currently only `memory://` is supported. We want to also support file-backed PostgreSQL where the PGDATA directory is persisted to disk, so that data survives JVM restarts. This would require changes to how ZeroFS is configured (or using real filesystem paths instead of ZeroFS for PGDATA) and potentially adjusting the wizer snapshot to handle pre-existing PGDATA on startup.
 
 **ServiceLoader registration:** `META-INF/services/java.sql.Driver` containing:
 ```
@@ -340,15 +342,18 @@ quarkus.datasource.jdbc.url=jdbc:pglite:memory://
 
 ### Phase 1: Get the driver working end-to-end
 
-- [ ] Create Maven project with pgjdbc + chicory dependencies
-- [ ] Move the wire protocol / CMA logic from `MachinesTest.java` into the driver as private implementation
-- [ ] Implement `forwardWire()` following the pglite-oxide pattern
-- [ ] Wire init sequence: extract archive, setup filesystem, WASM instance, `pgl_initdb`, `pgl_backend`, handshake
-- [ ] Internal `ServerSocket` on auto-selected free port, raw byte pass-through
-- [ ] `PgLiteDriver` class with `jdbc:pglite:` URL, ServiceLoader registration, delegation to pgjdbc
-- [ ] Bundle `pglite-wasi.tar.xz` as classpath resource, auto-extract on first `connect()`
-- [ ] Lazy singleton boot, JVM shutdown hook cleanup
-- [ ] Test: `DriverManager.getConnection("jdbc:pglite:memory://")` -> `SELECT 1`
+- [x] Create Maven project with chicory dependencies (core module exists)
+- [x] Move the wire protocol / CMA logic into `PGLite.java` + `PgWireCodec.java`
+- [x] Implement `execProtocolRaw()` following the pglite-oxide pattern
+- [x] Wire init sequence: extract pgdata, setup ZeroFS, WASM instance, `pgl_initdb`, `pgl_backend`, handshake
+- [x] Bundle pgdata as classpath resources, auto-extract to ZeroFS
+- [x] Test: `PGLite.query("SELECT 1")` works end-to-end
+- [x] WASM build pipeline: wasmtime + wizer + wasi-vfs + wasm-opt (single `make build`)
+- [ ] **JDBC driver**: `PgLiteDriver` class with `jdbc:pglite:` URL, ServiceLoader registration
+- [ ] **JDBC driver**: Internal `ServerSocket` on auto-selected free port, raw byte pass-through
+- [ ] **JDBC driver**: Delegation to pgjdbc for the actual JDBC implementation
+- [ ] **JDBC driver**: Lazy singleton boot, JVM shutdown hook cleanup
+- [ ] Test: `DriverManager.getConnection("jdbc:pglite:memory://")` -> `SELECT 1` via pgjdbc
 
 ### Phase 2: Validate with real-world usage
 
@@ -522,30 +527,35 @@ With wasi-vfs + wizer, the Java `PGLite` constructor simplifies to:
 - No `pgl_initdb()` / `pgl_backend()` / handshake calls — already done
 - Constructor just creates the Instance and it's ready for queries
 
-### Status: DISABLED — wasi-vfs blocks PGDATA access
+### Status: WORKING — wasi-vfs + wizer + wasmtime + wasm-opt
 
-The full pipeline (wasi-vfs + wizer + wasm-opt) is built and integrated
-into the Docker build. `SELECT 1` works, but **DDL (CREATE TABLE, etc.)
-fails** because wasi-vfs intercepts ALL WASI filesystem calls — not
-just paths under the mapped directories. When PostgreSQL tries to open
-`/tmp/pglite/base/global/pg_control` (PGDATA), wasi-vfs returns ENOENT
-because PGDATA was not embedded (it's mutable/writable). It never
-delegates to the host WASI (ZeroFS). Mapping specific subdirectories
-(`share`, `lib`, `bin`, `etc`) instead of the whole `/tmp/pglite` tree
-did not help — wasi-vfs still intercepts everything.
+The full build pipeline is implemented and working in a single
+`make build` run. The key insight was separating initdb (which traps
+via `pg_proc_exit(66)`) from the wizer snapshot step.
 
-**Current approach:** Link WITHOUT `libwasi_vfs.a`, skip wasi-vfs pack
-and wizer. Run full init from Java (`pgl_initdb`, `pgl_backend`,
-handshake). All files provided via ZeroFS from classpath resources.
-This is slower (no pre-initialization snapshot) but correct.
+**Build pipeline (in Docker):**
+1. Compile PostgreSQL to WASI → `pglite.wasi`
+2. **wasmtime pre-init**: runs `main()` with `INITDB_ONLY=1` to
+   populate `/pgdata` via initdb. `pg_proc_exit(66)` terminates
+   wasmtime gracefully (unlike wizer which needs a clean return).
+3. **wizer snapshot**: runs `wizer_initialize()` which detects
+   `/pgdata/PG_VERSION`, skips initdb, calls `pgl_backend()`, and
+   returns cleanly. Wizer snapshots the warm memory state.
+4. **wasi-vfs pack**: embeds `/tmp/pglite/share` and `/tmp/pglite/lib`
+   as read-only filesystem inside the WASM binary.
+5. **wasm-opt**: optimizes with `${WASM_OPT_FLAGS}` (default `-Oz --strip-debug`).
+6. **tar.xz**: packages `pglite.wasi` + `/pgdata` into archive.
 
-**TODO — re-enable wizer + wasi-vfs:** Once DDL/DML queries work
-end-to-end on the raw binary, revisit wasi-vfs with one of:
-1. Patch wasi-vfs to fall through to host WASI for unmapped files
-2. Embed PGDATA as read-only in wasi-vfs, copy to writable ZeroFS at
-   runtime, and remap the WASI preopen for `/tmp/pglite/base`
-3. Use a different approach: only wizer (no wasi-vfs), provide all
-   files via ZeroFS at runtime — wizer's `--mapdir` handles init
+**PGDATA handling**: wasi-vfs only embeds `share/` and `lib/` (read-only
+PostgreSQL distribution files). The mutable PGDATA cluster is NOT
+embedded in wasi-vfs — it's packaged separately in the tar.xz archive
+and provided at runtime via ZeroFS. This avoids the earlier problem
+where wasi-vfs intercepted all filesystem calls including PGDATA paths.
+
+**TODO — verify DDL/DML**: The wasi-vfs approach now only embeds
+`share/` and `lib/` subdirectories (not the whole `/tmp/pglite` tree).
+Need to verify that DDL (CREATE TABLE, etc.) works correctly with
+PGDATA served via ZeroFS while share/lib come from wasi-vfs.
 
 ### Hardcoded variables
 
@@ -556,7 +566,7 @@ and `build.sh` (wizer `env -` block).
 | Variable | Value | Used by |
 |----------|-------|---------|
 | `PREFIX` | `/tmp/pglite` | Install prefix for PG binaries, share, libs |
-| `PGDATA` | `/tmp/pglite/base` | Mutable database cluster directory |
+| `PGDATA` | `/pgdata` | Mutable database cluster directory (wizer uses `/pgdata`, Java may use `/pgdata` or `/tmp/pglite/base`) |
 | `PGUSER` | `postgres` | Superuser name |
 | `PGDATABASE` | `template1` | Default database |
 | `PATH` | `/tmp/pglite/bin` | Binary search path |

@@ -31,6 +31,8 @@
 
   <modules>
     <module>core</module>
+    <module>it</module>
+    <module>jdbc</module>
   </modules>
 
   <scm>
@@ -66,6 +68,7 @@
 
     <!-- runtime versions -->
     <chicory.version>1.6.1</chicory.version>
+    <postgresql.version>42.7.5</postgresql.version>
     <zerofs.version>0.1.0</zerofs.version>
   </properties>
 

@@ -14,6 +14,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,17 +44,18 @@ public final class PGLite implements AutoCloseable {
             // (share + lib are embedded in the WASM binary via wasi-vfs)
             extractDistToZeroFs(fs);
             Path tmp = fs.getPath("/tmp");
-            java.nio.file.Files.createDirectories(tmp);
+            Files.createDirectories(tmp);
             Path pgdata = fs.getPath("/pgdata");
             Path dev = fs.getPath("/dev");
-            java.nio.file.Files.createDirectories(dev);
-            java.nio.file.Files.write(dev.resolve("urandom"), new byte[128]);
+            Files.createDirectories(dev);
+            Files.write(dev.resolve("urandom"), new byte[128]);
 
             this.wasi =
                     WasiPreview1.builder()
                             .withOptions(
                                     WasiOptions.builder()
-                                            .inheritSystem()
+                                            // Enable for debugging:
+                                            // .inheritSystem()
                                             // Preopens must match wizer order: /tmp, /pgdata, /dev
                                             .withDirectory("/tmp", tmp)
                                             .withDirectory("/pgdata", pgdata)
@@ -95,33 +97,7 @@ public final class PGLite implements AutoCloseable {
 
             int channel = exports.getChannel();
             this.bufferAddr = exports.getBufferAddr(channel);
-            System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
-
-            // Wire protocol handshake
-            wireSendCma(PgWireCodec.startupMessage(PG_USER, PG_DATABASE));
-
-            boolean ready = false;
-            for (int round = 0; round < 100 && !ready; round++) {
-                exports.interactiveOne();
-                byte[] resp = wireRecvCma();
-                if (resp != null) {
-                    int[] auth = PgWireCodec.parseAuth(resp);
-                    if (auth[0] == 5) { // MD5 password
-                        byte[] salt = {
-                            (byte) auth[1], (byte) auth[2], (byte) auth[3], (byte) auth[4]
-                        };
-                        wireSendCma(PgWireCodec.md5PasswordMessage("password", PG_USER, salt));
-                    } else if (auth[0] == 3) { // Cleartext
-                        wireSendCma(PgWireCodec.passwordMessage("password"));
-                    }
-                    if (PgWireCodec.hasReadyForQuery(resp)) {
-                        ready = true;
-                    }
-                }
-            }
-            if (!ready) {
-                throw new RuntimeException("PostgreSQL handshake failed");
-            }
+            // System.err.println("PGLite: channel=" + channel + " bufferAddr=" + bufferAddr);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize PGLite", e);
         }
@@ -149,10 +125,6 @@ public final class PGLite implements AutoCloseable {
         }
 
         return concat(replies);
-    }
-
-    public byte[] query(String sql) {
-        return execProtocolRaw(PgWireCodec.queryMessage(sql));
     }
 
     public static Builder builder() {
@@ -222,7 +194,6 @@ public final class PGLite implements AutoCloseable {
     }
 
     // === Resource extraction ===
-
     private static void extractDistToZeroFs(FileSystem fs) throws IOException {
         InputStream manifest = PGLite.class.getResourceAsStream("/pglite-files.txt");
         if (manifest == null) {
@@ -240,10 +211,10 @@ public final class PGLite implements AutoCloseable {
                     continue;
                 }
                 Path target = fs.getPath("/" + line);
-                java.nio.file.Files.createDirectories(target.getParent());
+                Files.createDirectories(target.getParent());
                 try (InputStream in = PGLite.class.getResourceAsStream("/" + line)) {
                     if (in != null) {
-                        java.nio.file.Files.copy(in, target);
+                        Files.copy(in, target);
                     }
                 }
             }

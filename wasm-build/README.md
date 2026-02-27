@@ -33,6 +33,16 @@ This builds the Docker image, compiles PostgreSQL to WASI, and produces:
 | `output/sdk-dist/pg_dump.wasi` | pg_dump WASI binary |
 | `output/sdk-dist/pglite-wasi.tar.xz` | Distribution archive with all runtime files |
 
+## Disabling Debug Logging
+
+The build defaults to `DEBUG=true`, which enables verbose PostgreSQL debug output to stderr at runtime. To produce a quiet binary:
+
+```bash
+DEBUG=false make build
+```
+
+This compiles `PDEBUG()` as a no-op via the generated `pg_debug.h` header.
+
 ## Clean Rebuild
 
 ```bash

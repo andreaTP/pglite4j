@@ -6,3 +6,4 @@ wasm-build/stale-resources/
 core/src/main/resources/pglite/
 core/src/main/resources/pgdata/
 core/src/main/resources/*
+.idea

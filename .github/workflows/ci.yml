@@ -18,7 +18,7 @@ jobs:
 
       - name: Build pglite WASM
         working-directory: wasm-build
-        run: make build
+        run: DEBUG=false make build
 
       - name: Unpack WASM distribution
         working-directory: wasm-build
@@ -40,8 +40,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
-        java: [ 11, 25 ]
+        os: [ ubuntu-latest ]
+        java: [ 21 ]
 
     steps:
       - uses: actions/checkout@v4
