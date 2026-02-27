@@ -72,6 +72,7 @@
               <name>io.roastedroot.pglite4j.core.PGLiteModule</name>
               <wasmFile>../wasm-build/output/pglite.wasi</wasmFile>
               <!-- <interpreterFallback>WARN</interpreterFallback> -->
+              <!-- DEBUG: false -->
               <interpretedFunctions>
                 <function>5708</function>
                 <function>11479</function>
