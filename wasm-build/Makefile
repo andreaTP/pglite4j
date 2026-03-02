@@ -6,7 +6,7 @@ WASM_FILE := $(OUTPUT_DIR)/pglite.wasi
 
 .PHONY: build clean unpack
 
-WASM_OPT_FLAGS ?= -Oz --strip-debug
+WASM_OPT_FLAGS ?= -O3 --strip-debug
 
 build:
 	WASM_OPT_FLAGS="$(WASM_OPT_FLAGS)" $(SCRIPT_DIR)build.sh

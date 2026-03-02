@@ -72,12 +72,15 @@
               <name>io.roastedroot.pglite4j.core.PGLiteModule</name>
               <wasmFile>../wasm-build/output/pglite.wasi</wasmFile>
               <!-- <interpreterFallback>WARN</interpreterFallback> -->
-              <!-- DEBUG: false -->
               <interpretedFunctions>
-                <function>5708</function>
-                <function>11479</function>
-                <function>17648</function>
-                <function>25134</function>
+                <function>2918</function>
+                <function>4335</function>
+                <function>4336</function>
+                <function>4494</function>
+                <function>4551</function>
+                <function>6394</function>
+                <function>6397</function>
+                <function>11038</function>
               </interpretedFunctions>
             </configuration>
           </execution>

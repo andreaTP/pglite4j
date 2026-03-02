@@ -38,11 +38,12 @@ docker run --rm \
     -v "${OUTPUT_DIR}/sdk-dist:/tmp/sdk/dist:rw" \
     -v "${OUTPUT_DIR}/pglite:/tmp/pglite:rw" \
     -v "${OUTPUT_DIR}/pgdata:/pgdata:rw" \
+    -e CMA_MB="${CMA_MB:-12}" \
     -e DEBUG="${DEBUG:-true}" \
     -e PG_VERSION="${PG_VERSION:-17.5}" \
     -e PG_BRANCH="${PG_BRANCH:-REL_17_5_WASM-pglite}" \
     -e CI="${CI:-true}" \
-    -e WASM_OPT_FLAGS="${WASM_OPT_FLAGS:--Oz --strip-debug}" \
+    -e WASM_OPT_FLAGS="${WASM_OPT_FLAGS:--O3 --strip-debug}" \
     "${IMAGE_NAME}"
 
 echo "

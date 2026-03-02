@@ -68,6 +68,40 @@ public class PGLiteTest {
         }
     }
 
+    @Test
+    public void cmaBufferOverflow() {
+        try (PGLite pg = PGLite.builder().build()) {
+            doHandshake(pg);
+
+            int bufSize = pg.getBufferSize();
+            System.out.println(
+                    "CMA buffer size: " + bufSize + " bytes (" + (bufSize / 1024) + " KB)");
+
+            // Generate a wire protocol response that exceeds the CMA buffer.
+            // repeat('x', N) returns an N-byte string in the DataRow message.
+            int repeatLen = bufSize + 1000;
+            String sql = "SELECT repeat('x', " + repeatLen + ");";
+            System.out.println("Query: SELECT repeat('x', " + repeatLen + ")");
+
+            byte[] result = pg.execProtocolRaw(PgWireCodec.queryMessage(sql));
+            System.out.println("Response length: " + result.length + " bytes");
+            assertNotNull(result);
+            // The response must contain the full string + wire protocol overhead
+            assertTrue(
+                    result.length > repeatLen,
+                    "Expected response > " + repeatLen + " but got " + result.length);
+            assertTrue(
+                    PgWireCodec.hasReadyForQuery(result),
+                    "Expected ReadyForQuery in overflow response");
+
+            // Verify a normal query still works after the overflow
+            byte[] r2 = pg.execProtocolRaw(PgWireCodec.queryMessage("SELECT 42;"));
+            String data = PgWireCodec.parseDataRows(r2);
+            System.out.println("Post-overflow query: SELECT 42 => " + data);
+            assertTrue(data.contains("42"), "Normal query should work after CMA overflow");
+        }
+    }
+
     static void doHandshake(PGLite pg) {
         byte[] startup = PgWireCodec.startupMessage("postgres", "template1");
         byte[] resp1 = pg.execProtocolRaw(startup);

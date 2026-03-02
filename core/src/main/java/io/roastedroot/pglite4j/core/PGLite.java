@@ -5,7 +5,6 @@ import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.wasi.WasiOptions;
 import com.dylibso.chicory.wasi.WasiPreview1;
-import com.dylibso.chicory.wasm.types.MemoryLimits;
 import io.roastedroot.zerofs.Configuration;
 import io.roastedroot.zerofs.ZeroFs;
 import java.io.BufferedReader;
@@ -87,7 +86,6 @@ public final class PGLite implements AutoCloseable {
                             .withImportValues(imports)
                             .withMachineFactory(PGLiteModule::create)
                             .withStart(false)
-                            .withMemoryLimits(new MemoryLimits(2571))
                             .build();
             this.exports = new PGLite_ModuleExports(this.instance);
 
@@ -125,6 +123,11 @@ public final class PGLite implements AutoCloseable {
         }
 
         return concat(replies);
+    }
+
+    /** Returns the CMA buffer size in bytes (for diagnostics / testing). */
+    public int getBufferSize() {
+        return exports.getBufferSize(0);
     }
 
     public static Builder builder() {
@@ -170,7 +173,34 @@ public final class PGLite implements AutoCloseable {
         return resp;
     }
 
+    private byte[] wireRecvFile() {
+        try {
+            Path outFile = fs.getPath("/pgdata/.s.PGSQL.5432.out");
+            if (!Files.exists(outFile)) {
+                return null;
+            }
+            byte[] resp = Files.readAllBytes(outFile);
+            Files.delete(outFile);
+            exports.interactiveWrite(0);
+            pendingWireLen = 0;
+            return resp;
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read file transport output", e);
+        }
+    }
+
     private boolean collectReply(List<byte[]> replies) {
+        // Check channel: negative means C code fell back to file transport.
+        // Must check BEFORE wireRecvCma() since interactiveRead() would
+        // consume the read signal even when data went to file.
+        if (exports.getChannel() < 0) {
+            byte[] resp = wireRecvFile();
+            if (resp != null) {
+                replies.add(resp);
+                return true;
+            }
+            return false;
+        }
         byte[] resp = wireRecvCma();
         if (resp != null) {
             replies.add(resp);
