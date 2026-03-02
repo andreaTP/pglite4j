@@ -8,7 +8,7 @@
   <packaging>jar</packaging>
 
   <properties>
-    <quarkus.platform.version>3.17.7</quarkus.platform.version>
+    <quarkus.platform.version>3.32.1</quarkus.platform.version>
     <maven.compiler.release>17</maven.compiler.release>
     <maven.compiler.parameters>true</maven.compiler.parameters>
     <surefire-plugin.version>3.5.2</surefire-plugin.version>
