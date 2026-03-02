@@ -18,7 +18,7 @@
          else
              echo "compilation of libpglite ${BUILD} support failed"
          fi
-@@ -114,8 +114,91 @@
+@@ -114,8 +114,103 @@
  
          if [ -f ${PG_DIST}/pglite.wasi ]
          then
@@ -103,6 +103,18 @@
 +            echo "wasi-vfs pack output:"
 +            ls -lh ${PG_DIST}/pglite-packed.wasi
 +            mv ${PG_DIST}/pglite-packed.wasi ${PG_DIST}/pglite.wasi
++
++            echo "=== running wasm-opt ${WASM_OPT_FLAGS} ==="
++            ls -lh ${PG_DIST}/pglite.wasi
++            wasm-opt ${WASM_OPT_FLAGS} ${PG_DIST}/pglite.wasi -o ${PG_DIST}/pglite-opt.wasi
++            OPT_RC=$?
++            if [ $OPT_RC -ne 0 ] || [ ! -s ${PG_DIST}/pglite-opt.wasi ]; then
++                echo "FATAL: wasm-opt failed (exit code $OPT_RC)"
++                exit 1
++            fi
++            mv ${PG_DIST}/pglite-opt.wasi ${PG_DIST}/pglite.wasi
++            echo "wasm-opt output:"
++            ls -lh ${PG_DIST}/pglite.wasi
 +
              cp ${PG_DIST}/pglite.wasi ${PGROOT}/bin/
              touch ${PGROOT}/bin/initdb ${PGROOT}/bin/postgres

@@ -135,6 +135,22 @@ public class PgLiteDriverTest {
 
     @Test
     @Order(8)
+    void largeResultSet() throws SQLException {
+        try (Statement stmt = connection.createStatement();
+                ResultSet rs =
+                        stmt.executeQuery(
+                                "SELECT n, repeat('x', 100) AS data"
+                                        + " FROM generate_series(1, 500) AS n")) {
+            int count = 0;
+            while (rs.next()) {
+                count++;
+            }
+            assertEquals(500, count);
+        }
+    }
+
+    @Test
+    @Order(9)
     void driverAcceptsUrl() throws SQLException {
         PgLiteDriver driver = new PgLiteDriver();
         assertTrue(driver.acceptsURL("jdbc:pglite:memory://"));

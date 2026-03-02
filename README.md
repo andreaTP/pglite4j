@@ -111,11 +111,14 @@ pglite4j/
 
 - [ ] **Only `memory://` is supported** — no persistent / file-backed databases yet
 - [ ] **Single connection only** — PGlite is single-threaded; connection pool max size must be 1
-- [ ] **CMA buffer size is fixed** — large messages that exceed the CMA buffer (~12 MB total, ~16 KB per single message) are not yet handled via the file transport fallback
 - [ ] **Limited extensions** — only `plpgsql` and `dict_snowball` are bundled; adding more requires rebuilding the WASM binary
 - [ ] **Startup time** — first connection has some overhead it can be optimized more
 - [ ] **Binary size** — the WASM binary + pgdata resources add several MBs to the classpath
 - [ ] **Error recovery** — `clear_error()` integration for automatic transaction recovery is not yet wired up
+
+### CMA (Contiguous Memory Allocator)
+
+CMA is a preallocated contiguous region at the start of WASM linear memory used for zero-copy data transfer between Java and the PostgreSQL backend (similar concept to [Linux CMA](https://developer.toradex.com/software/linux-resources/linux-features/contiguous-memory-allocator-cma-linux/)). Messages that fit within the CMA buffer (default 12 MB) are transferred directly via shared memory. For responses that exceed the CMA buffer, the C code automatically falls back to file-based transport (`/pgdata/.s.PGSQL.5432.out`), which the Java side reads transparently.
 
 ## Building from source
 
