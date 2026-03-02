@@ -70,14 +70,22 @@ quarkus.datasource.password=password
 quarkus.datasource.jdbc.min-size=1
 quarkus.datasource.jdbc.max-size=1
 quarkus.devservices.enabled=false
+quarkus.hibernate-orm.dialect=org.hibernate.dialect.PostgreSQLDialect
+quarkus.hibernate-orm.unsupported-properties."hibernate.boot.allow_jdbc_metadata_access"=false
 ```
 
-### Spring Boot - NOT TESTED
+### Spring Boot
 
 ```properties
 # application-test.properties
 spring.datasource.url=jdbc:pglite:memory://
 spring.datasource.driver-class-name=io.roastedroot.pglite4j.jdbc.PgLiteDriver
+spring.datasource.username=postgres
+spring.datasource.password=password
+spring.datasource.hikari.maximum-pool-size=1
+spring.jpa.hibernate.ddl-auto=create-drop
+spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.properties.hibernate.boot.allow_jdbc_metadata_access=false
 ```
 
 ### HikariCP - NOT TESTED
