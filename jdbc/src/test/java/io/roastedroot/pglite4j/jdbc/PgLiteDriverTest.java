@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -201,6 +203,46 @@ public class PgLiteDriverTest {
 
     @Test
     @Order(12)
+    void persistentStorageBackupRestore() throws Exception {
+        Path backupFile = Files.createTempFile("pglite-jdbc-backup-", ".zip");
+        Files.delete(backupFile);
+        String url = "jdbc:pglite:" + backupFile.toAbsolutePath();
+
+        try {
+            // Session 1: create schema and data, then close the instance.
+            try (Connection conn = DriverManager.getConnection(url)) {
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("CREATE TABLE persist (id SERIAL PRIMARY KEY, val TEXT)");
+                    stmt.executeUpdate("INSERT INTO persist (val) VALUES ('survived')");
+                    stmt.executeUpdate("INSERT INTO persist (val) VALUES ('restart')");
+                }
+            }
+            // Closing the JDBC connection does not close the ManagedInstance.
+            // Evict it explicitly so the next connect creates a fresh instance
+            // that restores from the backup zip.
+            PgLiteDriver.closeAndEvict(backupFile.toAbsolutePath().toString());
+            assertTrue(Files.exists(backupFile), "Backup file should exist after evict");
+
+            // Session 2: reconnect — the driver boots a new PGLite from the backup.
+            try (Connection conn = DriverManager.getConnection(url)) {
+                try (Statement stmt = conn.createStatement();
+                        ResultSet rs = stmt.executeQuery("SELECT val FROM persist ORDER BY id")) {
+                    assertTrue(rs.next());
+                    assertEquals("survived", rs.getString("val"));
+                    assertTrue(rs.next());
+                    assertEquals("restart", rs.getString("val"));
+                    assertFalse(rs.next());
+                }
+            }
+            PgLiteDriver.closeAndEvict(backupFile.toAbsolutePath().toString());
+        } finally {
+            Files.deleteIfExists(backupFile);
+            Files.deleteIfExists(backupFile.resolveSibling(backupFile.getFileName() + ".tmp"));
+        }
+    }
+
+    @Test
+    @Order(13)
     void connectionCloseDoesNotAffectOther() throws SQLException {
         String url = "jdbc:pglite:memory:closetest";
         Connection conn1 = DriverManager.getConnection(url);

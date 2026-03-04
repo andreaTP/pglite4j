@@ -53,9 +53,36 @@ Add the JDBC driver dependency:
 ### Plain JDBC
 
 ```java
+// In-memory (ephemeral) — data is lost when the JVM exits
 Connection conn = DriverManager.getConnection("jdbc:pglite:memory://");
 conn.createStatement().execute("CREATE TABLE demo (id serial PRIMARY KEY, name text)");
 conn.createStatement().execute("INSERT INTO demo (name) VALUES ('hello')");
+```
+
+### Persistent storage
+
+Point the JDBC URL to a file path and `pglite4j` will periodically snapshot the entire in-memory database to a zip file on disk. On the next JVM startup, the database is restored from that snapshot.
+
+> **Note:** This is **not** traditional disk-backed storage. PostgreSQL runs entirely in memory (ZeroFS). The driver takes periodic snapshots (backup/restore), similar to Redis RDB persistence. Data written between the last snapshot and a crash will be lost. This is suitable for demo apps, prototyping, and development — not for production workloads that require durability guarantees.
+
+```java
+// File-backed — data survives JVM restarts
+Connection conn = DriverManager.getConnection("jdbc:pglite:/var/data/mydb.zip");
+```
+
+The driver backs up the database on a fixed schedule (default: every 60 seconds) and writes a final snapshot on shutdown. You can configure the backup interval via a connection property:
+
+```java
+Properties props = new Properties();
+props.setProperty("pgliteBackupIntervalSeconds", "30");
+Connection conn = DriverManager.getConnection("jdbc:pglite:/var/data/mydb.zip", props);
+```
+
+You can also use named in-memory databases for test isolation (separate PG instances, no persistence):
+
+```java
+Connection db1 = DriverManager.getConnection("jdbc:pglite:memory:testA");
+Connection db2 = DriverManager.getConnection("jdbc:pglite:memory:testB");
 ```
 
 ### Quarkus
@@ -64,28 +91,22 @@ conn.createStatement().execute("INSERT INTO demo (name) VALUES ('hello')");
 # application.properties
 quarkus.datasource.db-kind=postgresql
 quarkus.datasource.jdbc.url=jdbc:pglite:memory://
+# or persistent: jdbc:pglite:/var/data/myapp.zip
 quarkus.datasource.jdbc.driver=io.roastedroot.pglite4j.jdbc.PgLiteDriver
-quarkus.datasource.username=postgres
-quarkus.datasource.password=password
-quarkus.datasource.jdbc.min-size=1
 quarkus.datasource.jdbc.max-size=5
 quarkus.devservices.enabled=false
-quarkus.hibernate-orm.dialect=org.hibernate.dialect.PostgreSQLDialect
-quarkus.hibernate-orm.unsupported-properties."hibernate.boot.allow_jdbc_metadata_access"=false
 ```
 
 ### Spring Boot
 
 ```properties
-# application-test.properties
+# application.properties
 spring.datasource.url=jdbc:pglite:memory://
+# or persistent: jdbc:pglite:/var/data/myapp.zip
 spring.datasource.driver-class-name=io.roastedroot.pglite4j.jdbc.PgLiteDriver
-spring.datasource.username=postgres
-spring.datasource.password=password
 spring.datasource.hikari.maximum-pool-size=5
 spring.jpa.hibernate.ddl-auto=create-drop
 spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
-spring.jpa.properties.hibernate.boot.allow_jdbc_metadata_access=false
 ```
 
 ### HikariCP
@@ -109,7 +130,7 @@ pglite4j/
 
 ## Status and known limitations
 
-- [x] ~~**Only `memory://` is supported**~~ — persistent / file-backed databases are not planned; the WASM backend uses an in-memory virtual filesystem (ZeroFS) with no disk I/O, which is fundamental to the architecture
+- [x] ~~**Only `memory://` is supported**~~ — file-backed storage is now supported via periodic snapshots. The database runs entirely in memory; the driver takes a full snapshot (zip of pgdata) on a configurable schedule and on shutdown. On restart the snapshot is restored. This is backup/restore-style persistence (like Redis RDB), not write-ahead logging — data between the last snapshot and a crash is lost
 - [x] ~~**Single connection only**~~ — multiple JDBC connections are now supported per database instance; requests are serialized through a single PGLite backend via a lock, so connection pools with `max-size > 1` work correctly (queries execute one at a time, not in parallel)
 - [x] ~~**Error recovery**~~ — both simple and extended query protocol errors are handled correctly; PostgreSQL errors trap the WASM instance and are caught by the Java side, which resets the backend state and drains stale protocol buffers so subsequent queries work cleanly
 - [ ] **No connection isolation** — PostgreSQL runs in single-user mode with one session; all connections share the same session state (transactions, session variables). Queries are serialized, so there is no data corruption, but concurrent transactions are not isolated from each other. This is fine for connection pools that use connections sequentially (borrow, use, return).

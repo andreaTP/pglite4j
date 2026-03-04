@@ -12,11 +12,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 @WasmModuleInterface(WasmResource.absoluteFile)
 public final class PGLite implements AutoCloseable {
@@ -30,10 +36,12 @@ public final class PGLite implements AutoCloseable {
     private final WasiPreview1 wasi;
     private final PGLite_ModuleExports exports;
     private final FileSystem fs;
+    private final Path dataDir;
     private int bufferAddr;
     private int pendingWireLen;
 
-    private PGLite() {
+    private PGLite(Path dataDir) {
+        this.dataDir = dataDir;
         try {
             this.fs =
                     ZeroFs.newFileSystem(
@@ -42,6 +50,12 @@ public final class PGLite implements AutoCloseable {
             // Extract pgdata files into ZeroFS.
             // (share + lib are embedded in the WASM binary via wasi-vfs)
             extractDistToZeroFs(fs);
+
+            // Restore saved pgdata from a previous session (overwrites defaults).
+            if (dataDir != null && java.nio.file.Files.exists(dataDir)) {
+                restoreDataDir(dataDir);
+            }
+
             Path tmp = fs.getPath("/tmp");
             Files.createDirectories(tmp);
             Path pgdata = fs.getPath("/pgdata");
@@ -89,8 +103,15 @@ public final class PGLite implements AutoCloseable {
                             .build();
             this.exports = new PGLite_ModuleExports(this.instance);
 
-            // pgl_initdb + pgl_backend already executed by wizer at build time.
-            // closeAllVfds() was called at end of wizer to prevent stale fd PANICs.
+            if (dataDir != null && java.nio.file.Files.exists(dataDir)) {
+                // Restored pgdata differs from the wizer snapshot.
+                // The wizer snapshot's shared buffer pool has stale catalog
+                // pages from the clean template1 database; invalidate them
+                // so PostgreSQL re-reads from the restored ZeroFS files.
+                exports.pglInvalidateBuffers();
+            }
+
+            // pgl_initdb + pgl_backend already executed (by wizer or restart above).
             exports.interactiveWrite(0);
 
             int channel = exports.getChannel();
@@ -149,8 +170,61 @@ public final class PGLite implements AutoCloseable {
         return new Builder();
     }
 
+    /**
+     * Snapshot the in-memory pgdata directory to a zip file on the host filesystem.
+     * Runs VACUUM FREEZE + CHECKPOINT first so that all tuples are frozen (visible
+     * after restore without CLOG) and all dirty buffers are flushed to ZeroFS files.
+     * Writes atomically via temp file + move.
+     */
+    public void dumpDataDir(Path target) throws IOException {
+        // Freeze all tuple xmin values so they survive restore without
+        // needing the CLOG (commit log) cache from the original session.
+        // Then CHECKPOINT to flush all dirty buffers to ZeroFS files.
+        execProtocolRaw(buildSimpleQuery("VACUUM FREEZE;"));
+        execProtocolRaw(buildSimpleQuery("CHECKPOINT;"));
+
+        Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
+        Path pgdataRoot = fs.getPath(PG_DATA);
+
+        try (ZipOutputStream zos = new ZipOutputStream(java.nio.file.Files.newOutputStream(tmp))) {
+            try (Stream<Path> walk = Files.walk(pgdataRoot)) {
+                walk.filter(Files::isRegularFile)
+                        .filter(p -> !p.getFileName().toString().startsWith(".s.PGSQL."))
+                        .forEach(
+                                p -> {
+                                    try {
+                                        String entryName = pgdataRoot.relativize(p).toString();
+                                        zos.putNextEntry(new ZipEntry(entryName));
+                                        Files.copy(p, zos);
+                                        zos.closeEntry();
+                                    } catch (IOException e) {
+                                        throw new RuntimeException("Failed to zip " + p, e);
+                                    }
+                                });
+            }
+        }
+
+        // Atomic move; fall back to plain replace if the filesystem doesn't support it.
+        try {
+            java.nio.file.Files.move(
+                    tmp,
+                    target,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            java.nio.file.Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
     @Override
     public void close() {
+        if (dataDir != null) {
+            try {
+                dumpDataDir(dataDir);
+            } catch (IOException | RuntimeException e) {
+                // best-effort backup on close
+            }
+        }
         try {
             exports.pglShutdown();
         } catch (RuntimeException e) {
@@ -224,6 +298,19 @@ public final class PGLite implements AutoCloseable {
         return false;
     }
 
+    private static byte[] buildSimpleQuery(String query) {
+        byte[] sql = query.getBytes(StandardCharsets.UTF_8);
+        byte[] msg = new byte[1 + 4 + sql.length + 1];
+        msg[0] = 'Q';
+        int len = 4 + sql.length + 1;
+        msg[1] = (byte) (len >> 24);
+        msg[2] = (byte) (len >> 16);
+        msg[3] = (byte) (len >> 8);
+        msg[4] = (byte) len;
+        System.arraycopy(sql, 0, msg, 5, sql.length);
+        return msg;
+    }
+
     private static byte[] concat(List<byte[]> replies) {
         int totalLen = 0;
         for (byte[] r : replies) {
@@ -238,8 +325,43 @@ public final class PGLite implements AutoCloseable {
         return result;
     }
 
+    private void restoreDataDir(Path source) throws IOException {
+        Path pgdataRoot = fs.getPath(PG_DATA);
+        try (ZipInputStream zis = new ZipInputStream(java.nio.file.Files.newInputStream(source))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                Path target = pgdataRoot.resolve(entry.getName());
+                Files.createDirectories(target.getParent());
+                // Overwrite classpath defaults with saved state.
+                Files.deleteIfExists(target);
+                Files.copy(zis, target);
+            }
+        }
+    }
+
     // === Resource extraction ===
     private static void extractDistToZeroFs(FileSystem fs) throws IOException {
+        // Create all pgdata directories first (including empty ones that
+        // PostgreSQL expects, e.g. pg_logical/snapshots).
+        InputStream dirManifest = PGLite.class.getResourceAsStream("/pglite-dirs.txt");
+        if (dirManifest != null) {
+            try (BufferedReader dr =
+                    new BufferedReader(
+                            new InputStreamReader(dirManifest, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = dr.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) {
+                        continue;
+                    }
+                    Files.createDirectories(fs.getPath("/" + line));
+                }
+            }
+        }
+
         InputStream manifest = PGLite.class.getResourceAsStream("/pglite-files.txt");
         if (manifest == null) {
             throw new RuntimeException(
@@ -267,10 +389,18 @@ public final class PGLite implements AutoCloseable {
     }
 
     public static final class Builder {
+        private Path dataDir;
+
         private Builder() {}
 
+        /** Set a host filesystem path for pgdata backup/restore (zip file). */
+        public Builder withDataDir(Path dataDir) {
+            this.dataDir = dataDir;
+            return this;
+        }
+
         public PGLite build() {
-            return new PGLite();
+            return new PGLite(dataDir);
         }
     }
 }

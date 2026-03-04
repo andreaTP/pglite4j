@@ -17,6 +17,7 @@ clean:
 	rm -f $(WASM_FILE)
 	rm -rf $(RESOURCES_DIR)/pgdata
 	rm -f $(RESOURCES_DIR)/pglite-files.txt
+	rm -f $(RESOURCES_DIR)/pglite-dirs.txt
 	rm -f $(RESOURCES_DIR)/pglite.wasi
 
 unpack: $(ARCHIVE)
@@ -31,8 +32,9 @@ unpack: $(ARCHIVE)
 	@echo "=== Copying pgdata to core/src/main/resources/ ==="
 	mkdir -p $(RESOURCES_DIR)
 	cp -r $(OUTPUT_DIR)/tmp/pgdata $(RESOURCES_DIR)/pgdata
-	@echo "=== Generating pglite-files.txt manifest ==="
+	@echo "=== Generating pglite-files.txt and pglite-dirs.txt manifests ==="
 	cd $(RESOURCES_DIR) && find pgdata -type f | sort > $(RESOURCES_DIR)/pglite-files.txt
+	cd $(RESOURCES_DIR) && find pgdata -type d | sort > $(RESOURCES_DIR)/pglite-dirs.txt
 	rm -rf $(OUTPUT_DIR)/tmp
 	@echo "=== Done ==="
 	ls -lh $(WASM_FILE)

@@ -1,6 +1,32 @@
 --- a/pgl_mains.c
 +++ b/pgl_mains.c
-@@ -335,6 +335,8 @@
+@@ -22,6 +22,25 @@
+     return 0;
+ }
+
++#include <string.h>
++#include "storage/buf_internals.h"
++#include "utils/inval.h"
++
++__attribute__((export_name("pgl_invalidate_buffers")))
++void
++pgl_invalidate_buffers() {
++    int i;
++    /* Clear shared buffer pool so stale pages are re-read from disk. */
++    for (i = 0; i < NBuffers; i++) {
++        BufferDesc *bufHdr = GetBufferDescriptor(i);
++        pg_atomic_write_u32(&bufHdr->state, 0);
++        memset(&bufHdr->tag, 0, sizeof(bufHdr->tag));
++    }
++    /* Flush per-backend catalog/relation caches so they are rebuilt
++     * from the restored pg_class, pg_attribute, etc. pages. */
++    InvalidateSystemCaches();
++}
++
+ #if FIXME
+ extern bool startswith(const char *str, const char *prefix);
+ #endif
+@@ -335,6 +349,8 @@
 
  	CreateSharedMemoryAndSemaphores();
 
@@ -9,7 +35,7 @@
  	/*
  	 * Remember stand-alone backend startup time,roughly at the same point
  	 * during startup that postmaster does so.
-@@ -348,6 +350,7 @@
+@@ -348,6 +364,7 @@
  	InitProcess();
 
  // main
@@ -17,7 +43,7 @@
  	SetProcessingMode(InitProcessing);
 
  	/* Early initialization */
-@@ -355,6 +358,7 @@
+@@ -355,6 +372,7 @@
  async_db_change:;
 
  PDEBUG("# 167");

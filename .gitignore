@@ -7,3 +7,6 @@ core/src/main/resources/pglite/
 core/src/main/resources/pgdata/
 core/src/main/resources/*
 .idea
+
+# Backup zip files created by tests
+memory:*
