@@ -7,6 +7,8 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.DriverManager;
@@ -19,6 +21,9 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
@@ -55,12 +60,19 @@ public final class PgLiteDriver implements Driver {
         }
 
         String dataPath = url.substring(URL_PREFIX.length());
+        long backupIntervalSeconds =
+                Long.parseLong(
+                        info != null
+                                ? info.getProperty("pgliteBackupIntervalSeconds", "60")
+                                : "60");
+
         ManagedInstance instance =
                 INSTANCES.computeIfAbsent(
                         dataPath,
                         k -> {
+                            Path dir = k.startsWith("memory:") ? null : Paths.get(k);
                             ManagedInstance inst = new ManagedInstance();
-                            inst.boot();
+                            inst.boot(dir, backupIntervalSeconds);
                             return inst;
                         });
 
@@ -111,17 +123,31 @@ public final class PgLiteDriver implements Driver {
         throw new SQLFeatureNotSupportedException();
     }
 
+    static void closeAndEvict(String dataPath) {
+        ManagedInstance inst = INSTANCES.remove(dataPath);
+        if (inst != null) {
+            inst.close();
+        }
+    }
+
     static final class ManagedInstance {
         private PGLite pgLite;
         private ServerSocket serverSocket;
         private volatile boolean running;
+        private Path dataDir;
+        private ScheduledExecutorService backupScheduler;
         private final Object pgLock = new Object();
         private final AtomicInteger connectionCounter = new AtomicInteger();
         private final Set<Socket> activeSockets = ConcurrentHashMap.newKeySet();
         private volatile List<byte[]> cachedStartupResponses;
 
-        void boot() {
-            pgLite = PGLite.builder().build();
+        void boot(Path dataDir, long backupIntervalSeconds) {
+            this.dataDir = dataDir;
+            PGLite.Builder b = PGLite.builder();
+            if (dataDir != null) {
+                b.withDataDir(dataDir);
+            }
+            pgLite = b.build();
             try {
                 serverSocket = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
             } catch (IOException e) {
@@ -132,6 +158,31 @@ public final class PgLiteDriver implements Driver {
             Thread acceptThread = new Thread(this::acceptLoop, "pglite-accept");
             acceptThread.setDaemon(true);
             acceptThread.start();
+
+            if (dataDir != null) {
+                backupScheduler =
+                        Executors.newSingleThreadScheduledExecutor(
+                                r -> {
+                                    Thread t = new Thread(r, "pglite-backup");
+                                    t.setDaemon(true);
+                                    return t;
+                                });
+                backupScheduler.scheduleAtFixedRate(
+                        this::scheduledBackup,
+                        backupIntervalSeconds,
+                        backupIntervalSeconds,
+                        TimeUnit.SECONDS);
+            }
+        }
+
+        private void scheduledBackup() {
+            try {
+                synchronized (pgLock) {
+                    pgLite.dumpDataDir(dataDir);
+                }
+            } catch (IOException e) {
+                // best-effort periodic backup
+            }
         }
 
         int getPort() {
@@ -256,6 +307,9 @@ public final class PgLiteDriver implements Driver {
 
         void close() {
             running = false;
+            if (backupScheduler != null) {
+                backupScheduler.shutdownNow();
+            }
             try {
                 serverSocket.close();
             } catch (IOException e) {
@@ -266,6 +320,18 @@ public final class PgLiteDriver implements Driver {
                     s.close();
                 } catch (IOException e) {
                     // cleanup
+                }
+            }
+            // Final dump before destroying the WASM instance.
+            // PGLite.close() also dumps, but doing it here under pgLock
+            // prevents races with any in-flight connection handlers.
+            if (dataDir != null) {
+                try {
+                    synchronized (pgLock) {
+                        pgLite.dumpDataDir(dataDir);
+                    }
+                } catch (IOException e) {
+                    // best-effort
                 }
             }
             pgLite.close();

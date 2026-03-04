@@ -33,6 +33,7 @@ jobs:
             wasm-build/output/pglite.wasi
             core/src/main/resources/pgdata/
             core/src/main/resources/pglite-files.txt
+            core/src/main/resources/pglite-dirs.txt
 
   build:
     needs: wasm-build

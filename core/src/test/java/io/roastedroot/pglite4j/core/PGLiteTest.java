@@ -3,6 +3,8 @@ package io.roastedroot.pglite4j.core;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 public class PGLiteTest {
@@ -131,6 +133,84 @@ public class PGLiteTest {
             assertTrue(
                     data3.contains("2"),
                     "Instance should be reusable after extended protocol error");
+        }
+    }
+
+    @Test
+    public void dumpCreatesValidZip() throws Exception {
+        Path backupFile = Files.createTempFile("pglite-backup-", ".zip");
+        Files.delete(backupFile);
+
+        try {
+            try (PGLite pg = PGLite.builder().build()) {
+                doHandshake(pg);
+
+                pg.execProtocolRaw(
+                        PgWireCodec.queryMessage("CREATE TABLE persist_test (id INT, val TEXT);"));
+                pg.execProtocolRaw(
+                        PgWireCodec.queryMessage(
+                                "INSERT INTO persist_test VALUES (1, 'survived');"));
+
+                pg.dumpDataDir(backupFile);
+                assertTrue(Files.exists(backupFile), "Backup file should exist after dump");
+                assertTrue(Files.size(backupFile) > 0, "Backup file should not be empty");
+
+                // Verify the zip contains pgdata files.
+                java.util.Set<String> entries = new java.util.HashSet<>();
+                try (java.util.zip.ZipInputStream zis =
+                        new java.util.zip.ZipInputStream(Files.newInputStream(backupFile))) {
+                    java.util.zip.ZipEntry e;
+                    while ((e = zis.getNextEntry()) != null) {
+                        entries.add(e.getName());
+                    }
+                }
+                assertTrue(entries.contains("PG_VERSION"), "Zip should contain PG_VERSION");
+                assertTrue(
+                        entries.stream().anyMatch(n -> n.startsWith("base/")),
+                        "Zip should contain base/ directory entries");
+            }
+        } finally {
+            Files.deleteIfExists(backupFile);
+        }
+    }
+
+    @Test
+    public void dataDirectoryBackupRestore() throws Exception {
+        Path backupFile = Files.createTempFile("pglite-backup-", ".zip");
+        Files.delete(backupFile); // start without an existing backup
+
+        try {
+            // Session 1: create data and dump.
+            try (PGLite pg = PGLite.builder().withDataDir(backupFile).build()) {
+                doHandshake(pg);
+
+                pg.execProtocolRaw(
+                        PgWireCodec.queryMessage("CREATE TABLE persist_test (id INT, val TEXT);"));
+                pg.execProtocolRaw(
+                        PgWireCodec.queryMessage(
+                                "INSERT INTO persist_test VALUES (1, 'survived');"));
+
+                pg.dumpDataDir(backupFile);
+                assertTrue(Files.exists(backupFile), "Backup file should exist after dump");
+                assertTrue(Files.size(backupFile) > 0, "Backup file should not be empty");
+            }
+
+            // Session 2: restore from the dump and verify data survived.
+            try (PGLite pg = PGLite.builder().withDataDir(backupFile).build()) {
+                doHandshake(pg);
+
+                byte[] r =
+                        pg.execProtocolRaw(
+                                PgWireCodec.queryMessage(
+                                        "SELECT val FROM persist_test WHERE id = 1;"));
+                String data = PgWireCodec.parseDataRows(r);
+                assertTrue(
+                        data.contains("survived"),
+                        "Data should survive restart via backup/restore, got: " + data);
+            }
+        } finally {
+            Files.deleteIfExists(backupFile);
+            Files.deleteIfExists(backupFile.resolveSibling(backupFile.getFileName() + ".tmp"));
         }
     }
 
